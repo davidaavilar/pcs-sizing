@@ -27,7 +27,7 @@ def pcs_sizing_aws():
 
     try:
         ec2_all = 0
-        for region in us_regions:
+        for region in regions:
 
             ec2 = boto3.client('ec2',region_name=region)
             client_ecs = boto3.client('ecs',region_name=region)
