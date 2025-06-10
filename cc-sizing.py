@@ -1,4 +1,4 @@
-import json, os, argparse
+import json, os, argparse, math
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--azure", "-az", help="Sizing for Azure", action='store_true')
@@ -7,12 +7,41 @@ parser.add_argument("--gcp", "-g", help="Sizing for GCP", action='store_true')
 parser.add_argument("--oci", "-o", help="Sizing for OCI", action='store_true')
 parser.add_argument("--project", "-p", help="Project (only for GCP)", type=str)
 args = parser.parse_args()
-separator = "--------------------------------------------------------------------"
+separator = "-----------------------------------------------------------------------------------------------------"
 
+regions_preffix = "us"
+
+cc_metering = {"serverless": 25, 
+               "vm": 1,
+               "caas": 10,
+               "buckets": 10,
+               "db": 2,
+               "saas_users": 10,
+               "asm": 4}
+
+cc_metering_table = [
+    ["VMs not running containers", "1 VM"],
+    ["VMs running containers", "1 VM"],
+    ["CaaS", "10 Managed Containers"],
+    ["Serverless Functions", "25 Serverless Functions"],
+    ["Cloud Buckets", "10 Cloud Buckets"],
+    ["Managed Cloud Database (PaaS)", "2 PaaS Databases"],
+    ["DBaaS TB stored", "1 TB Stored"],
+    ["SaaS users", "10 SaaS Users"],
+    ["Cloud ASM - service", "4 Unmanaged Assets"]
+]
+
+def cortex_cloud_metering():
+    print("\n{}\n{}\n{}".format(separator,"Cortex Cloud Workload Metering",separator))
+    tables(None,"",cc_metering_table)
+    
 def tables(account,acc,data):
     for i in data:
         a,b = i
-        print ("{:<40} {:<20} {:<10}".format(acc,a,b))
+        if account == None:
+            print ("{:<0} {:<40} {:<10}".format(acc,a,b))
+        else:
+            print ("{:<50} {:<40} {:<10}".format(acc,a,b))
     print(separator)
 
 def pcs_sizing_aws():
@@ -23,8 +52,9 @@ def pcs_sizing_aws():
     client_ec2 = boto3.client('ec2')
     sts = boto3.client("sts")
     org = boto3.client('organizations')
+    iam = boto3.client('iam')
 
-    print("\n{}\nGetting Resources from AWS for all Regions\n{}".format(separator,separator))
+    print("\n{}\nGetting Resources from AWS for {} Regions\n{}".format(separator,regions_preffix.upper(), separator))
 
     accounts = []
     # paginator = org.get_paginator('list_accounts')
@@ -36,7 +66,10 @@ def pcs_sizing_aws():
     #             RoleSessionName=account['Id']
     #         )
     try:
-        account = sts.get_caller_identity()["Account"]
+        accountid = sts.get_caller_identity()["Account"]
+        aliases = iam.list_account_aliases()['AccountAliases']
+        account_name = aliases[0] if aliases else 'No alias found'
+        account = f"{accountid} ({account_name})"
     except botocore.exceptions.ClientError as error:
         # Put your error handling logic here
         raise error
@@ -46,21 +79,23 @@ def pcs_sizing_aws():
     except botocore.exceptions.ClientError as error:
         raise error
     
-    us_regions = [x for x in regions if x.startswith("us")]
+    regions = [x for x in regions if x.startswith(regions_preffix)]
 
     try:
         ec2_all = 0
         eks_all = 0
         fargate_all = 0
         lambdas_all = 0
+        rds_all = 0
+        dynamodb_all = 0
+        s3_all = 0
+        redshift_all = 0
+        efs_all = 0
 
         for region in regions:
-
-            ec2 = boto3.client('ec2',region_name=region)
-            client_ecs = boto3.client('ecs',region_name=region)
-            lambda_client = boto3.client('lambda',region_name=region)
             # Get EC2 instances running.
             try:
+                ec2 = boto3.client('ec2',region_name=region)
                 ec2_group = ec2.describe_instances(
                     Filters=[{
                     'Name': 'instance-state-code',
@@ -74,6 +109,7 @@ def pcs_sizing_aws():
     
             try:
             # Get EC2 instances running on EKS.
+                client_ecs = boto3.client('ecs',region_name=region)
                 eks_list = []
                 for ec2 in ec2_group:
                     tags = ec2['Instances'][0]['Tags']
@@ -94,19 +130,76 @@ def pcs_sizing_aws():
             
             try:
             # Get AWS Lambdas
+                lambda_client = boto3.client('lambda',region_name=region)
                 lambdas = lambda_client.list_functions()['Functions']
                 lambdas_all += len(lambdas)
             except botocore.exceptions.ClientError as error:
                 raise error
-        print ("{:<40} {:<20} {:<10}\n{}".format('Account','Service','Count',separator))
-        
+            
+            try:
+                # Get S3
+                s3 = boto3.client('s3')
+                buckets = s3.list_buckets()['Buckets']
+                s3_all += len(buckets)
+            except botocore.exceptions.ClientError as error:
+                raise error
+
+            try:
+                # Get RDS Instances
+                rds = boto3.client('rds')
+                instances = rds.describe_db_instances()['DBInstances']
+                rds_all += len(instances)
+            except botocore.exceptions.ClientError as error:
+                raise error
+                        
+            try:
+                # Get DynamoDB
+                dynamodb = boto3.client('dynamodb')
+                dynamo_tables = dynamodb.list_tables()['TableNames']
+                dynamodb_all += len(dynamo_tables)
+            except botocore.exceptions.ClientError as error:
+                raise error
+
+            try:
+                # Get Redshift
+                redshift = boto3.client('redshift')
+                clusters = redshift.describe_clusters()['Clusters']
+                redshift_all += len(clusters)
+            except botocore.exceptions.ClientError as error:
+                raise error
+            
+            try:
+                # Get EFS
+                efs = boto3.client('efs')
+                file_systems = efs.describe_file_systems()['FileSystems']
+                efs_all = len(file_systems)
+            except botocore.exceptions.ClientError as error:
+                raise error
+
+        print ("{:<50} {:<40} {:<10}\n{}".format('Account','Service','Count',separator))
+
         tables("Account",account,
             [
-            ["EC2", ec2_all],
-            ["EKS_NODES", eks_all],
-            ["FARGATE_TASKS", fargate_all],
-            ["LAMBDAS_FUNCTIONS", lambdas_all]
+            ["EC2 Instances", ec2_all-eks_all],
+            ["EKS Nodes (included as EC2)", eks_all],
+            ["Fargate_Tasks", fargate_all],
+            ["Lambdas", lambdas_all],
+            ["S3_Buckets", s3_all],
+            ["Redshift Clusters", redshift_all],
+            ["RDS Instances", rds_all],
+            ["DynamoDB Tables", dynamodb_all],
+            ["EFS Systems", efs_all]
             ])
+        
+        #Licensing Sum
+        aws_licensing_count = (
+            math.ceil(ec2_all-eks_all / cc_metering["vm"]) +
+            math.ceil(lambdas_all / cc_metering["serverless"]) +
+            math.ceil(fargate_all / cc_metering["caas"]) +
+            math.ceil(s3_all / cc_metering["buckets"]) +
+            math.ceil((redshift_all + rds_all + dynamodb_all + efs_all) / cc_metering["db"])
+        )
+        print("You will need {} Cortex Cloud workloads (SKU) to cover this AWS Account".format(aws_licensing_count))
         
     except botocore.exceptions.ClientError as error:
         raise error
@@ -118,12 +211,21 @@ def pcs_sizing_az():
     from azure.mgmt.containerservice import ContainerServiceClient
     from azure.mgmt.subscription import SubscriptionClient
     from azure.mgmt.web import WebSiteManagementClient
+    from azure.mgmt.sql import SqlManagementClient
+    from azure.mgmt.cosmosdb import CosmosDBManagementClient
+    from azure.mgmt.storage import StorageManagementClient
+
+
     sub_client = SubscriptionClient(credential=DefaultAzureCredential())
     print("\n{}\nGetting Resources from AZURE\n{}".format(separator,separator))
     for sub in sub_client.subscriptions.list():
         compute_client = ComputeManagementClient(credential=DefaultAzureCredential(), subscription_id=sub.subscription_id)
         containerservice_client = ContainerServiceClient(credential=DefaultAzureCredential(), subscription_id=sub.subscription_id)
         app_service_client = WebSiteManagementClient(credential=DefaultAzureCredential(), subscription_id=sub.subscription_id)
+        sql_client = SqlManagementClient(credential=DefaultAzureCredential(), subscription_id=sub.subscription_id)
+        cosmos_client = CosmosDBManagementClient(credential=DefaultAzureCredential(), subscription_id=sub.subscription_id)
+        storage_client = StorageManagementClient(credential=DefaultAzureCredential(), subscription_id=sub.subscription_id)
+
         # List VMs in subscription
         vm_list = []
         for vm in compute_client.virtual_machines.list_all():
@@ -136,6 +238,7 @@ def pcs_sizing_az():
                 vm_list.append(vm_name)
 
         # List AKS Clusters in subscription
+
         clusters_list = []
         node_count = 0
         for cl in containerservice_client.managed_clusters.list():
@@ -152,13 +255,42 @@ def pcs_sizing_az():
         for function in app_service_client.web_apps.list():
             if function.kind.startswith('function'):
                 function_list += 1
-        print ("{:<40} {:<20} {:<10}\n{}".format('Subscription','Service','Count',separator))
+
+        # List Azure SQL
+        sql_db_count = 0
+        for server in sql_client.servers.list():
+            for db in sql_client.databases.list_by_server(server.resource_group_name, server.name):
+                sql_db_count += 1
+
+        # List Cosmo DB
+        cosmos_count = 0
+        for account in cosmos_client.database_accounts.list():
+            cosmos_count += 1 if account.public_network_access == "Enabled" else None
+
+        # List Storage Accounts
+        storage_count = 0
+        for account in storage_client.storage_accounts.list():
+            storage_count += 1
+
+        print ("{:<50} {:<40} {:<10}\n{}".format('Subscription','Service','Count',separator))
         tables("Subscription",str(sub.display_name + " (" + sub.subscription_id.split('-')[4].strip() + ")"),
             [
             ["VM", len(vm_list)],
             ["AKS_NODES", node_count],
-            ["AZURE_FUNCTIONS",function_list]
+            ["AZURE_FUNCTIONS",function_list],
+            ["AZURE_SQL", sql_db_count],
+            ["COSMO_DB", cosmos_count],
+            ["STORAGE_ACCOUNTS", storage_count]
             ])
+        
+        #Licensing Sum
+        az_licensing_count = (
+            math.ceil(len(vm_list)+node_count / cc_metering["vm"]) +
+            math.ceil(function_list / cc_metering["serverless"]) +
+            math.ceil(storage_count / cc_metering["buckets"]) +
+            math.ceil((cosmos_count + sql_db_count) / cc_metering["db"])
+        )
+        print("You will need {} Cortex Cloud workloads (SKU) to cover this Azure Subscription\n{}".format(az_licensing_count,separator))
 
 def pcs_sizing_gcp(project):
 
@@ -201,6 +333,8 @@ def pcs_sizing_gcp(project):
     node_count = 0
     for cluster in response.clusters:
         node_count += cluster.current_node_count
+    
+
 
     print ("{:<40} {:<20} {:<10}\n{}".format('Project','Service','Count',separator))
     tables("Project",project,
@@ -252,6 +386,7 @@ def pcs_sizing_oci():
             ])
         
 if __name__ == '__main__':
+    cortex_cloud_metering()
     if args.aws == True:
         pcs_sizing_aws()
     elif args.azure == True:
