@@ -1,11 +1,11 @@
-# Prisma Cloud License Sizing Script
+# Cortex Cloud License Sizing Script
 
 ## TODO
 
 - AWS: 
     - It only works for a single account, not for Organization yet. It must be execute by AWS Account.
 - GCP:
-    - It only works for a single project, not for Organization yet. You must specify the ProjectID.
+    - It only works for a single project, not for Organization yet. You must specify the ProjectID. Only work for Compute workloads, not for DSPM assets yet.
 - OCI:
     - It only works for the OCI tenant for Home Region. Not for OKE nodes yet.
 

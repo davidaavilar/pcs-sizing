@@ -334,8 +334,6 @@ def pcs_sizing_gcp(project):
     for cluster in response.clusters:
         node_count += cluster.current_node_count
     
-
-
     print ("{:<40} {:<20} {:<10}\n{}".format('Project','Service','Count',separator))
     tables("Project",project,
            [
@@ -394,6 +392,7 @@ if __name__ == '__main__':
     elif args.oci == True:
         pcs_sizing_oci()  
     elif args.gcp == True:#and args.project:
+        print("Note: It's only counting Compute workloads; not DSPM assets")
         pcs_sizing_gcp(project=args.project)
     elif args.gcp == True and not args.project:
         print("If GCP is selected, you must specify a project.")
