@@ -19,7 +19,7 @@ This document describes how to prepare for, and how to run the Prisma Cloud Lice
 2. Clone this repository, e.g. ```git clone https://github.com/davidaavilar/pcs-sizing.git```
 3. ```cd pcs-sizing```
 4. ```pip install -r requeriments.txt```
-- ```python3 pcs-sizing.py --aws``` for AWS.
-- ```python3 pcs-sizing.py --azure``` for Azure.
-- ```python3 pcs-sizing.py --gcp --project <GCP_PROJECT>``` for GCP.
-- ```python3 pcs-sizing.py --oci``` for OCI.
+- ```python3 cc-sizing.py --aws``` for AWS.
+- ```python3 cc-sizing.py --azure``` for Azure.
+- ```python3 cc-sizing.py --gcp --project <GCP_PROJECT>``` for GCP.
+- ```python3 cc-sizing.py --oci``` for OCI.
