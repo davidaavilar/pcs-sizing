@@ -294,11 +294,17 @@ def pcs_sizing_az():
 
 def pcs_sizing_gcp(project):
 
+    import google.auth
     from google.auth import compute_engine
     from google.cloud.resourcemanager import ProjectsClient
     from google.cloud import compute_v1
     from google.cloud import container_v1beta1
+    from google.cloud import functions_v1
+    from google.cloud import bigquery
+    from google.cloud import bigtable
+    from google.cloud import storage
     from google.cloud import resourcemanager_v3
+    from googleapiclient.discovery import build
     from collections import defaultdict
     
     print("\n{}\nGetting Resources from GCP\n{}".format(separator,separator))
@@ -333,12 +339,53 @@ def pcs_sizing_gcp(project):
     node_count = 0
     for cluster in response.clusters:
         node_count += cluster.current_node_count
+
+    ### Get Google Functions (Run)
+    client = functions_v1.CloudFunctionsServiceClient()
+    parent = f"projects/{project}/locations/-"
+    functions = client.list_functions(request={"parent": parent})
+    gcp_functions = [fn.name for fn in functions]
+
+    client = build("run", "v1")
+    parent = f"projects/{project}/locations/-"
+    response = client.projects().locations().services().list(parent=parent).execute()
+    gcp_cloudRun = [s["metadata"]["name"] for s in response.get("items", [])]
+
+    ### Get Cloud Storage buckets
+    client = storage.Client(project=project)
+    buckets = client.list_buckets()
+    gcp_buckets = [bucket.name for bucket in buckets]
+
+    ## Get BigQuery datasets
+    client = bigquery.Client(project=project)
+    datasets = client.list_datasets()
+    gcp_bigquery_ds = [ds.dataset_id for ds in datasets]
+
+    ### Get Bigtable instances
+
+    client = bigtable.Client(project=project, admin=True)
+    instances, _ = client.list_instances()
+    gcp_bigtables = [instance.instance_id for instance in instances]
+
+    ### Get Cloud SQL instances
+    sqladmin = build("sqladmin", "v1beta4")
+    response = sqladmin.instances().list(project=project).execute()
+    if "items" in response:
+        gcp_cloudql = [instance["name"] for instance in response["items"] if instance["state"] == "RUNNABLE"]
+    else:
+        gcp_cloudql = []
     
-    print ("{:<40} {:<20} {:<10}\n{}".format('Project','Service','Count',separator))
+    print ("{:<50} {:<40} {:<10}\n{}".format('Project','Service','Count',separator))
     tables("Project",project,
            [
-        ["VM", len(compute_list)],
-        ["GKE_NODES", node_count]
+        ["Compute Instances", len(compute_list)],
+        ["GKE Nodes", node_count],
+        ["Google Functions", len(gcp_functions)],
+        ["Google CloudRun", len(gcp_cloudRun)],
+        ["Cloud Storages", len(gcp_buckets)],
+        ["BigQuery Datasets", len(gcp_bigquery_ds)],
+        ["BigTable instances", len(gcp_bigtables)],
+        ["CloudSQL instances", len(gcp_cloudql)],
         ])
 
 def pcs_sizing_oci():
@@ -392,7 +439,6 @@ if __name__ == '__main__':
     elif args.oci == True:
         pcs_sizing_oci()  
     elif args.gcp == True:#and args.project:
-        print("Note: It's only counting Compute workloads; not DSPM assets")
         pcs_sizing_gcp(project=args.project)
     elif args.gcp == True and not args.project:
         print("If GCP is selected, you must specify a project.")

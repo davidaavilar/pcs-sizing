@@ -9,5 +9,10 @@ azure.mgmt.storage
 google-cloud-compute
 google-cloud-container
 google-cloud-resource-manager
+google-cloud-functions
+google-cloud-bigquery
+google-cloud-bigtable
+google-cloud-storage
+google-api-python-client
 boto3
 botocore
