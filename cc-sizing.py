@@ -198,13 +198,15 @@ def pcs_sizing_aws():
     # Sizing the other member accounts
 
     paginator = org.get_paginator('list_accounts')
-
-    for page in paginator.paginate():
-        for acct in page['Accounts']:
-            accounts.append({'Id': acct['Id'],
-                             'Name': acct['Name'],
-                             'Status': acct['Status'],
-                             'Arn': acct['Arn']}) if acct['Status'] == "ACTIVE" else None
+    try:
+        for page in paginator.paginate():
+            for acct in page['Accounts']:
+                accounts.append({'Id': acct['Id'],
+                                'Name': acct['Name'],
+                                'Status': acct['Status'],
+                                'Arn': acct['Arn']}) if acct['Status'] == "ACTIVE" else None
+    except botocore.exceptions.ClientError as error:
+        raise error
 
     for account in accounts:
         arn = account['Arn'] # "arn:aws:organizations::xxxxxxxx:account/o-d0gioxy5zd/xxxxxxxxxx"
