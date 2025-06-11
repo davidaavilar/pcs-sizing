@@ -1,4 +1,6 @@
 import json, os, argparse, math
+import boto3,botocore
+from botocore.exceptions import ClientError
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--azure", "-az", help="Sizing for Azure", action='store_true')
@@ -30,9 +32,10 @@ def cortex_cloud_metering():
     
 def tables(account,acc,data):
     print ("{:<50} {:<40} {:<10}\n{}".format('Account','Service','Count',separator))
+    account = f'{acc["Id"]} ({acc["Name"]})'
     for i in data:
         a,b = i
-        print ("{:<50} {:<40} {:<10}".format(acc,a,b))
+        print ("{:<50} {:<40} {:<10}".format(account,a,b))
     print(separator)
 
 def licensing_count(cloud,vm,serverless,caas,buckets,db):
@@ -46,30 +49,18 @@ def licensing_count(cloud,vm,serverless,caas,buckets,db):
     )
     print("You will need {} Cortex Cloud workloads (SKU) to cover this {} Account\n{}".format(licensing_count,cloud,separator))
 
-def pcs_sizing_aws():
-    import boto3,botocore
-    from botocore.exceptions import ClientError
+def aws(account):
 
     client_ec2 = boto3.client('ec2')
     sts = boto3.client("sts")
     org = boto3.client('organizations')
     iam = boto3.client('iam')
-    accounts = []
-    print("\n{}\nGetting Resources from AWS for {} Regions\n{}".format(separator,regions_preffix.upper(), separator))
-
-    try:
-        accountid = sts.get_caller_identity()["Account"]
-        aliases = iam.list_account_aliases()['AccountAliases']
-        account_name = aliases[0] if aliases else 'No alias found'
-        account = f"{accountid} ({account_name})"
-    except botocore.exceptions.ClientError as error:
-        raise error
 
     try:
         regions = [region['RegionName'] for region in client_ec2.describe_regions()['Regions']]
     except botocore.exceptions.ClientError as error:
         raise error
-    
+        
     regions = [x for x in regions if x.startswith(regions_preffix)]
 
     try:
@@ -184,6 +175,60 @@ def pcs_sizing_aws():
     except botocore.exceptions.ClientError as error:
         raise error
 
+def pcs_sizing_aws():
+
+    client_ec2 = boto3.client('ec2')
+    sts = boto3.client("sts")
+    org = boto3.client('organizations')
+    iam = boto3.client('iam')
+    accounts = []
+    print("\n{}\nGetting Resources from AWS for {} Regions\n{}".format(separator,regions_preffix.upper(), separator))
+
+    #Sizing the current (master I hope) account.
+
+    accountid = sts.get_caller_identity()["Account"]
+    aliases = iam.list_account_aliases()['AccountAliases']
+    account_name = aliases[0] if aliases else 'No alias found'
+    account = {
+        "Name": account_name,
+        "Id": accountid
+    }
+    current_account = aws(account)
+
+    # Sizing the other member accounts
+
+    paginator = org.get_paginator('list_accounts')
+
+    for page in paginator.paginate():
+        for acct in page['Accounts']:
+            accounts.append({'Id': acct['Id'],
+                             'Name': acct['Name'],
+                             'Status': acct['Status'],
+                             'Arn': acct['Arn']}) if acct['Status'] == "ACTIVE" else None
+
+    for account in accounts:
+        arn = account['Arn'] # "arn:aws:organizations::xxxxxxxx:account/o-d0gioxy5zd/xxxxxxxxxx"
+        parts = arn.split(':')
+        org_account_id = parts[4]  # after de ::
+        target_account_id = arn.split('/')[-1]  # after latest /
+        if org_account_id != target_account_id:
+            try:
+                sts_client = boto3.client('sts')
+                role_arn = f"arn:aws:iam::{account['Id']}:role/OrganizationAccountAccessRole"
+                try:
+                    response = sts_client.assume_role(
+                        RoleArn=role_arn,
+                        RoleSessionName='CrossAccountSession'
+                    )
+                    creds = response['Credentials']
+                    aws(account)
+                    return creds
+                except botocore.exceptions.ClientError as error:
+                    print(f"Error with the account {account['Name']} - {account['Id']}: \n{error}\n{separator}")
+                    continue
+            except botocore.exceptions.ClientError as error:
+                raise error
+
 def pcs_sizing_az():
 
     from azure.mgmt.compute import ComputeManagementClient
@@ -273,8 +318,6 @@ def pcs_sizing_az():
 def pcs_sizing_gcp():
 
     import google.auth
-    from google.auth import compute_engine
-    from google.cloud.resourcemanager import ProjectsClient
     from google.cloud import compute_v1
     from google.cloud import container_v1beta1
     from google.cloud import functions_v1
