@@ -5,7 +5,7 @@
 - AWS: 
     - It only works for a single account, not for Organization yet. It must be execute by AWS Account.
 - GCP:
-    - It only works for a single project, not for Organization yet. You must specify the ProjectID. Only work for Compute workloads, not for DSPM assets yet.
+    - It only works the project "ACTIVE" where the user is executing the script has access.
 - OCI:
     - It only works for the OCI tenant for Home Region. Not for OKE nodes yet.
 
@@ -21,5 +21,5 @@ This document describes how to prepare for, and how to run the Prisma Cloud Lice
 4. ```pip install -r requeriments.txt```
 - ```python3 cc-sizing.py --aws``` for AWS.
 - ```python3 cc-sizing.py --azure``` for Azure.
-- ```python3 cc-sizing.py --gcp --project <GCP_PROJECT>``` for GCP.
+- ```python3 cc-sizing.py --gcp``` for GCP.
 - ```python3 cc-sizing.py --oci``` for OCI.

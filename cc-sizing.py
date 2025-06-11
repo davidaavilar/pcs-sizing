@@ -5,19 +5,12 @@ parser.add_argument("--azure", "-az", help="Sizing for Azure", action='store_tru
 parser.add_argument("--aws", "-a", help="Sizing for AWS", action='store_true')
 parser.add_argument("--gcp", "-g", help="Sizing for GCP", action='store_true')
 parser.add_argument("--oci", "-o", help="Sizing for OCI", action='store_true')
-parser.add_argument("--project", "-p", help="Project (only for GCP)", type=str)
 args = parser.parse_args()
 separator = "-----------------------------------------------------------------------------------------------------"
 
 regions_preffix = "us"
 
-cc_metering = {"serverless": 25, 
-               "vm": 1,
-               "caas": 10,
-               "buckets": 10,
-               "db": 2,
-               "saas_users": 10,
-               "asm": 4}
+cc_metering = {"serverless": 25, "vm": 1, "caas": 10, "buckets": 10, "db": 2, "saas_users": 10,"asm": 4}
 
 cc_metering_table = [
     ["VMs not running containers", "1 VM"],
@@ -36,42 +29,40 @@ def cortex_cloud_metering():
     tables(None,"",cc_metering_table)
     
 def tables(account,acc,data):
+    print ("{:<50} {:<40} {:<10}\n{}".format('Account','Service','Count',separator))
     for i in data:
         a,b = i
-        if account == None:
-            print ("{:<0} {:<40} {:<10}".format(acc,a,b))
-        else:
-            print ("{:<50} {:<40} {:<10}".format(acc,a,b))
+        print ("{:<50} {:<40} {:<10}".format(acc,a,b))
     print(separator)
 
+def licensing_count(cloud,vm,serverless,caas,buckets,db):
+
+    licensing_count = (
+        math.ceil(vm / cc_metering["vm"]) +
+        math.ceil(serverless / cc_metering["serverless"]) +
+        math.ceil(caas / cc_metering["caas"]) +
+        math.ceil(buckets / cc_metering["buckets"]) +
+        math.ceil(db / cc_metering["db"])
+    )
+    print("You will need {} Cortex Cloud workloads (SKU) to cover this {} Account\n{}".format(licensing_count,cloud,separator))
+
 def pcs_sizing_aws():
-    import boto3
-    import botocore
+    import boto3,botocore
     from botocore.exceptions import ClientError
 
     client_ec2 = boto3.client('ec2')
     sts = boto3.client("sts")
     org = boto3.client('organizations')
     iam = boto3.client('iam')
-
+    accounts = []
     print("\n{}\nGetting Resources from AWS for {} Regions\n{}".format(separator,regions_preffix.upper(), separator))
 
-    accounts = []
-    # paginator = org.get_paginator('list_accounts')
-    # for page in paginator.paginate():
-    #     for account in page['Accounts']:
-    #         accounts.append(account['Id'])
-    #         response = sts.assume_role(
-    #             RoleArn="arn:aws:iam::" + account['Id'] + ":role/OrganizationAccountAccessRole",
-    #             RoleSessionName=account['Id']
-    #         )
     try:
         accountid = sts.get_caller_identity()["Account"]
         aliases = iam.list_account_aliases()['AccountAliases']
         account_name = aliases[0] if aliases else 'No alias found'
         account = f"{accountid} ({account_name})"
     except botocore.exceptions.ClientError as error:
-        # Put your error handling logic here
         raise error
 
     try:
@@ -176,8 +167,6 @@ def pcs_sizing_aws():
             except botocore.exceptions.ClientError as error:
                 raise error
 
-        print ("{:<50} {:<40} {:<10}\n{}".format('Account','Service','Count',separator))
-
         tables("Account",account,
             [
             ["EC2 Instances", ec2_all-eks_all],
@@ -190,17 +179,8 @@ def pcs_sizing_aws():
             ["DynamoDB Tables", dynamodb_all],
             ["EFS Systems", efs_all]
             ])
-        
-        #Licensing Sum
-        aws_licensing_count = (
-            math.ceil(ec2_all-eks_all / cc_metering["vm"]) +
-            math.ceil(lambdas_all / cc_metering["serverless"]) +
-            math.ceil(fargate_all / cc_metering["caas"]) +
-            math.ceil(s3_all / cc_metering["buckets"]) +
-            math.ceil((redshift_all + rds_all + dynamodb_all + efs_all) / cc_metering["db"])
-        )
-        print("You will need {} Cortex Cloud workloads (SKU) to cover this AWS Account".format(aws_licensing_count))
-        
+        licensing_count("AWS",ec2_all+eks_all,lambdas_all,fargate_all,s3_all,redshift_all+rds_all+dynamodb_all+efs_all)
+
     except botocore.exceptions.ClientError as error:
         raise error
 
@@ -214,7 +194,6 @@ def pcs_sizing_az():
     from azure.mgmt.sql import SqlManagementClient
     from azure.mgmt.cosmosdb import CosmosDBManagementClient
     from azure.mgmt.storage import StorageManagementClient
-
 
     sub_client = SubscriptionClient(credential=DefaultAzureCredential())
     print("\n{}\nGetting Resources from AZURE\n{}".format(separator,separator))
@@ -272,7 +251,6 @@ def pcs_sizing_az():
         for account in storage_client.storage_accounts.list():
             storage_count += 1
 
-        print ("{:<50} {:<40} {:<10}\n{}".format('Subscription','Service','Count',separator))
         tables("Subscription",str(sub.display_name + " (" + sub.subscription_id.split('-')[4].strip() + ")"),
             [
             ["VM", len(vm_list)],
@@ -290,9 +268,9 @@ def pcs_sizing_az():
             math.ceil(storage_count / cc_metering["buckets"]) +
             math.ceil((cosmos_count + sql_db_count) / cc_metering["db"])
         )
-        print("You will need {} Cortex Cloud workloads (SKU) to cover this Azure Subscription\n{}".format(az_licensing_count,separator))
+        licensing_count("Azure",len(vm_list)+node_count,function_list,0,storage_count,cosmos_count+sql_db_count)
 
-def pcs_sizing_gcp(project):
+def pcs_sizing_gcp():
 
     import google.auth
     from google.auth import compute_engine
@@ -309,84 +287,101 @@ def pcs_sizing_gcp(project):
     
     print("\n{}\nGetting Resources from GCP\n{}".format(separator,separator))
 
-    # pj_client = resourcemanager_v3.ProjectsClient()
-    # request = resourcemanager_v3.ListProjectsRequest(
-    #     parent="parent_value",
-    # )
-    # page_result = pj_client.list_projects()
-    # for response in page_result:
-    #     print(response)
+    service = build('cloudresourcemanager', 'v1')
 
-    # Getting the Compute Instances
-    compute_client = compute_v1.InstancesClient()
-    request = compute_v1.AggregatedListInstancesRequest()
-    request.project = project
-    agg_list = compute_client.aggregated_list(request=request)
-    all_instances = defaultdict(list)
-    compute_list = []
-    for zone, response in agg_list:
-        if response.instances:
-            for instance in response.instances:
-                if instance.status == "RUNNING":
-                    compute_list.append(instance.name)
+    request = service.projects().list()
+    projects = []
 
-    # Getting the Compute Instances for GKE
-    gke_client = container_v1beta1.ClusterManagerClient()
-    gke_request = container_v1beta1.ListClustersRequest()
-    gke_request.project_id = project
-    gke_request.zone = "-"
-    response = gke_client.list_clusters(request=gke_request)
-    node_count = 0
-    for cluster in response.clusters:
-        node_count += cluster.current_node_count
+    while request is not None:
+        response = request.execute()
+        for project in response.get("projects", []):
+            projects.append({
+                "projectId": project["projectId"],
+                "name": project.get("name", ""),
+                "lifecycleState": project.get("lifecycleState", "")
+            })
+        request = service.projects().list_next(previous_request=request, previous_response=response)
 
-    ### Get Google Functions (Run)
-    client = functions_v1.CloudFunctionsServiceClient()
-    parent = f"projects/{project}/locations/-"
-    functions = client.list_functions(request={"parent": parent})
-    gcp_functions = [fn.name for fn in functions]
+    for p in projects:
+        try:
+            if p['lifecycleState'] == "ACTIVE":
+                project_id = p['projectId']
+                project_name = p['name']
+                project = f"{project_name} ({project_id})"
 
-    client = build("run", "v1")
-    parent = f"projects/{project}/locations/-"
-    response = client.projects().locations().services().list(parent=parent).execute()
-    gcp_cloudRun = [s["metadata"]["name"] for s in response.get("items", [])]
+                # Getting the Compute Instances
+                compute_client = compute_v1.InstancesClient()
+                request = compute_v1.AggregatedListInstancesRequest()
+                request.project = project_id
+                agg_list = compute_client.aggregated_list(request=request)
+                all_instances = defaultdict(list)
+                compute_list = []
+                for zone, response in agg_list:
+                    if response.instances:
+                        for instance in response.instances:
+                            if instance.status == "RUNNING":
+                                compute_list.append(instance.name)
 
-    ### Get Cloud Storage buckets
-    client = storage.Client(project=project)
-    buckets = client.list_buckets()
-    gcp_buckets = [bucket.name for bucket in buckets]
+                # Getting the Compute Instances for GKE
+                gke_client = container_v1beta1.ClusterManagerClient()
+                gke_request = container_v1beta1.ListClustersRequest()
+                gke_request.project_id = project_id
+                gke_request.zone = "-"
+                response = gke_client.list_clusters(request=gke_request)
+                node_count = 0
+                for cluster in response.clusters:
+                    node_count += cluster.current_node_count
 
-    ## Get BigQuery datasets
-    client = bigquery.Client(project=project)
-    datasets = client.list_datasets()
-    gcp_bigquery_ds = [ds.dataset_id for ds in datasets]
+                ### Get Google Functions (Run)
+                client = functions_v1.CloudFunctionsServiceClient()
+                parent = f"projects/{project_id}/locations/-"
+                functions = client.list_functions(request={"parent": parent})
+                gcp_functions = [fn.name for fn in functions]
 
-    ### Get Bigtable instances
+                client = build("run", "v1")
+                parent = f"projects/{project_id}/locations/-"
+                response = client.projects().locations().services().list(parent=parent).execute()
+                gcp_cloudRun = [s["metadata"]["name"] for s in response.get("items", [])]
 
-    client = bigtable.Client(project=project, admin=True)
-    instances, _ = client.list_instances()
-    gcp_bigtables = [instance.instance_id for instance in instances]
+                ### Get Cloud Storage buckets
+                client = storage.Client(project=project_id)
+                buckets = client.list_buckets()
+                gcp_buckets = [bucket.name for bucket in buckets]
 
-    ### Get Cloud SQL instances
-    sqladmin = build("sqladmin", "v1beta4")
-    response = sqladmin.instances().list(project=project).execute()
-    if "items" in response:
-        gcp_cloudql = [instance["name"] for instance in response["items"] if instance["state"] == "RUNNABLE"]
-    else:
-        gcp_cloudql = []
-    
-    print ("{:<50} {:<40} {:<10}\n{}".format('Project','Service','Count',separator))
-    tables("Project",project,
-           [
-        ["Compute Instances", len(compute_list)],
-        ["GKE Nodes", node_count],
-        ["Google Functions", len(gcp_functions)],
-        ["Google CloudRun", len(gcp_cloudRun)],
-        ["Cloud Storages", len(gcp_buckets)],
-        ["BigQuery Datasets", len(gcp_bigquery_ds)],
-        ["BigTable instances", len(gcp_bigtables)],
-        ["CloudSQL instances", len(gcp_cloudql)],
-        ])
+                ## Get BigQuery datasets
+                client = bigquery.Client(project=project_id)
+                datasets = client.list_datasets()
+                gcp_bigquery_ds = [ds.dataset_id for ds in datasets]
+
+                ### Get Bigtable instances
+
+                client = bigtable.Client(project=project_id, admin=True)
+                instances, _ = client.list_instances()
+                gcp_bigtables = [instance.instance_id for instance in instances]
+
+                ### Get Cloud SQL instances
+                sqladmin = build("sqladmin", "v1beta4")
+                response = sqladmin.instances().list(project=project_id).execute()
+                if "items" in response:
+                    gcp_cloudql = [instance["name"] for instance in response["items"] if instance["state"] == "RUNNABLE"]
+                else:
+                    gcp_cloudql = []
+                
+                tables("Project",project,
+                    [
+                    ["Compute Instances", len(compute_list)],
+                    ["GKE Nodes", node_count],
+                    ["Google Functions", len(gcp_functions)],
+                    ["Google CloudRun", len(gcp_cloudRun)],
+                    ["Cloud Storages", len(gcp_buckets)],
+                    ["BigQuery Datasets", len(gcp_bigquery_ds)],
+                    ["BigTable instances", len(gcp_bigtables)],
+                    ["CloudSQL instances", len(gcp_cloudql)],
+                ])
+                licensing_count("GCP",len(compute_list)+node_count,len(gcp_cloudRun)+len(gcp_functions),0,len(gcp_buckets),len(gcp_bigquery_ds)+len(gcp_bigtables)+len(gcp_cloudql))
+        
+        except Exception as e:
+            print("Error:", e)
 
 def pcs_sizing_oci():
 
@@ -414,7 +409,6 @@ def pcs_sizing_oci():
 
     # For every compartment, list all the VMs and OKE nodes (TODO)
     
-    print ("{:<40} {:<20} {:<10}\n{}".format('Compartment','Service','Count',separator))
     for compartment in compartments_list:
         response = ComputeClient.list_instances(compartment_id=compartment['Id'])
         compute_oci = 0
@@ -438,10 +432,7 @@ if __name__ == '__main__':
         pcs_sizing_az()  
     elif args.oci == True:
         pcs_sizing_oci()  
-    elif args.gcp == True:#and args.project:
-        pcs_sizing_gcp(project=args.project)
-    elif args.gcp == True and not args.project:
-        print("If GCP is selected, you must specify a project.")
-        exit()
+    elif args.gcp == True:
+        pcs_sizing_gcp()
     else:
         print("You must specify an argument.\n\x1B[3m'--aws'\x1B[0m for AWS\n\x1B[3m'--azure'\x1B[0m for Azure\n\x1B[3m'--gcp --project <project-name>'\x1B[0m for GCP\n\x1B[3m'--oci'\x1B[0m for OCI")
