@@ -181,7 +181,7 @@ def pcs_sizing_aws():
         tables("Account",account,
             [
             ["EC2 Instances", ec2_all-eks_all],
-            ["EKS Nodes (included as EC2)", eks_all],
+            ["EKS Nodes", eks_all],
             ["Fargate_Tasks", fargate_all],
             ["Lambdas", lambdas_all],
             ["S3_Buckets", s3_all],
@@ -384,7 +384,7 @@ def pcs_sizing_oci():
             ])
         
 if __name__ == '__main__':
-    cortex_cloud_metering()
+    # cortex_cloud_metering()
     if args.aws == True:
         pcs_sizing_aws()
     elif args.azure == True:
