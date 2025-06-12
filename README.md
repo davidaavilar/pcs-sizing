@@ -38,4 +38,8 @@ The collected data is used to estimate the capacity and licensing model required
 - ```python3 cc-sizing.py --gcp``` for GCP.
 - ```python3 cc-sizing.py --oci``` for OCI.
 
+## TODO
+
+DBaaS TB stored, SaaS users, Cloud ASM - service is not ready.
+
 ---
