@@ -265,39 +265,53 @@ def pcs_sizing_az():
                 vm_list.append(vm_name)
 
         # List AKS Clusters in subscription
+        try:
+            clusters_list = []
+            node_count = 0
+            for cl in containerservice_client.managed_clusters.list():
+                clusters_list.append(cl.name)
+                agent_pool = containerservice_client.agent_pools.list(
+                    cl.id.split('/')[4].strip(),
+                    cl.name
+                )
+                for ap in agent_pool:
+                    node_count += ap.count
+        except Exception as e:
+            print("Error:", e)
+        
+        try:
+            # List Azure Functions
+            function_list = 0
+            for function in app_service_client.web_apps.list():
+                if function.kind.startswith('function'):
+                    function_list += 1
+        except Exception as e:
+            print("Error:", e)
+        
+        try:
+            # List Azure SQL
+            sql_db_count = 0
+            for server in sql_client.servers.list():
+                for db in sql_client.databases.list_by_server(server.resource_group_name, server.name):
+                    sql_db_count += 1
+        except Exception as e:
+            print("Error:", e)
 
-        clusters_list = []
-        node_count = 0
-        for cl in containerservice_client.managed_clusters.list():
-            clusters_list.append(cl.name)
-            agent_pool = containerservice_client.agent_pools.list(
-                cl.id.split('/')[4].strip(),
-                cl.name
-            )
-            for ap in agent_pool:
-                node_count += ap.count
+        try:        
+            # List Cosmo DB
+            cosmos_count = 0
+            for account in cosmos_client.database_accounts.list():
+                cosmos_count += 1 if account.public_network_access == "Enabled" else None
+        except Exception as e:
+            print("Error:", e)
 
-        # List Azure Functions
-        function_list = 0
-        for function in app_service_client.web_apps.list():
-            if function.kind.startswith('function'):
-                function_list += 1
-
-        # List Azure SQL
-        sql_db_count = 0
-        for server in sql_client.servers.list():
-            for db in sql_client.databases.list_by_server(server.resource_group_name, server.name):
-                sql_db_count += 1
-
-        # List Cosmo DB
-        cosmos_count = 0
-        for account in cosmos_client.database_accounts.list():
-            cosmos_count += 1 if account.public_network_access == "Enabled" else None
-
-        # List Storage Accounts
-        storage_count = 0
-        for account in storage_client.storage_accounts.list():
-            storage_count += 1
+        try:
+            # List Storage Accounts
+            storage_count = 0
+            for account in storage_client.storage_accounts.list():
+                storage_count += 1
+        except Exception as e:
+            print("Error:", e)
 
         account_info = {
             "Name": str(sub.display_name),
