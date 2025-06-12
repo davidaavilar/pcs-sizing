@@ -39,5 +39,3 @@ The collected data is used to estimate the capacity and licensing model required
 - ```python3 cc-sizing.py --oci``` for OCI.
 
 ---
-
-Let me know if you'd like to include example outputs, environment variables, or CLI options.
