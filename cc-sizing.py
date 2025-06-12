@@ -30,9 +30,10 @@ def cortex_cloud_metering():
     print("\n{}\n{}\n{}".format(separator,"Cortex Cloud Workload Metering",separator))
     tables(None,"",cc_metering_table)
     
-def tables(account,acc,data):
+def tables(account_info,data):
     print ("{:<50} {:<40} {:<10}\n{}".format('Account','Service','Count',separator))
-    account = f'{acc["Id"]} ({acc["Name"]})'
+    account = f'{account_info["Id"]} ({account_info["Name"]})'
+
     for i in data:
         a,b = i
         print ("{:<50} {:<40} {:<10}".format(account,a,b))
@@ -158,7 +159,7 @@ def aws(account):
             except botocore.exceptions.ClientError as error:
                 raise error
 
-        tables("Account",account,
+        tables(account,
             [
             ["EC2 Instances", ec2_all-eks_all],
             ["EKS Nodes", eks_all],
@@ -189,16 +190,16 @@ def pcs_sizing_aws():
     accountid = sts.get_caller_identity()["Account"]
     aliases = iam.list_account_aliases()['AccountAliases']
     account_name = aliases[0] if aliases else 'No alias found'
-    account = {
+    account_info = {
         "Name": account_name,
         "Id": accountid
     }
-    current_account = aws(account)
+    current_account = aws(account_info)
 
+    print("\nTraying in other accounts\n{}".format(separator))
     # Sizing the other member accounts
-
-    paginator = org.get_paginator('list_accounts')
     try:
+        paginator = org.get_paginator('list_accounts')
         for page in paginator.paginate():
             for acct in page['Accounts']:
                 accounts.append({'Id': acct['Id'],
@@ -206,7 +207,7 @@ def pcs_sizing_aws():
                                 'Status': acct['Status'],
                                 'Arn': acct['Arn']}) if acct['Status'] == "ACTIVE" else None
     except botocore.exceptions.ClientError as error:
-        raise error
+        print(f"{error}\n{separator}")
 
     for account in accounts:
         arn = account['Arn'] # "arn:aws:organizations::xxxxxxxx:account/o-d0gioxy5zd/xxxxxxxxxx"
@@ -298,7 +299,11 @@ def pcs_sizing_az():
         for account in storage_client.storage_accounts.list():
             storage_count += 1
 
-        tables("Subscription",str(sub.display_name + " (" + sub.subscription_id.split('-')[4].strip() + ")"),
+        account_info = {
+            "Name": str(sub.display_name),
+            "Id": sub.subscription_id.split('-')[4].strip()
+        }
+        tables(account_info,
             [
             ["VM", len(vm_list)],
             ["AKS_NODES", node_count],
@@ -352,7 +357,6 @@ def pcs_sizing_gcp():
             if p['lifecycleState'] == "ACTIVE":
                 project_id = p['projectId']
                 project_name = p['name']
-                project = f"{project_name} ({project_id})"
 
                 # Getting the Compute Instances
                 compute_client = compute_v1.InstancesClient()
@@ -412,7 +416,12 @@ def pcs_sizing_gcp():
                 else:
                     gcp_cloudql = []
                 
-                tables("Project",project,
+                account_info = {
+                    "Name": project_name,
+                    "Id": project_id
+                }
+
+                tables(account_info,
                     [
                     ["Compute Instances", len(compute_list)],
                     ["GKE Nodes", node_count],
