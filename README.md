@@ -40,6 +40,6 @@ The collected data is used to estimate the capacity and licensing model required
 
 ## TODO
 
-DBaaS TB stored, SaaS users, Cloud ASM - service is not ready.
+DBaaS TB stored, SaaS users and Cloud ASM aren't ready.
 
 ---
