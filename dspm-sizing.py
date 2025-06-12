@@ -37,14 +37,16 @@ def getToken():
 	    "Accept": "application/json; charset=UTF-8",
     	"Content-Type": "application/json; charset=UTF-8"
 	}
-
+    
 	loginresp = requests.request("POST", loginurl, data=payload, headers=headers)
 	if loginresp.status_code == 200:
 		loginresp = json.loads(loginresp.text)
 		token = loginresp['token']
+		return token
 	else:
 		print('Please, validate your credentials and/or your tenant. There is an error.')
-	return token
+		exit()
+	
 
 def dspmSizing(api_list):
     csp_count = 0

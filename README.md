@@ -1,17 +1,31 @@
-# Cortex Cloud License Sizing Script
+# Cortex Cloud Sizing Script
 
-## TODO
+This script helps collect the necessary information to properly **size a Cortex Cloud project**. It automates the gathering of key metrics used to estimate resource consumption and licensing needs.
 
-- AWS: 
-    - It only works for a single account, not for Organization yet. It must be execute by AWS Account.
-- GCP:
-    - It only works the project "ACTIVE" where the user is executing the script has access.
-- OCI:
-    - It only works for the OCI tenant for Home Region. Not for OKE nodes yet.
+## What does this script collect?
 
-## Overview
+The script scans cloud or hybrid environments to identify resources in the following categories:
 
-This document describes how to prepare for, and how to run the Prisma Cloud License Sizing Script for AWS, Azure, GCP, and OCI.
+| Resource Type                        | Unit Equivalent               |
+|--------------------------------------|-------------------------------|
+| VMs not running containers           | 1 VM                          |
+| VMs running containers               | 1 VM                          |
+| CaaS                                 | 10 Managed Containers         |
+| Serverless Functions                 | 25 Serverless Functions       |
+| Cloud Buckets                        | 10 Cloud Buckets              |
+| Managed Cloud Database (PaaS)        | 2 PaaS Databases              |
+| DBaaS TB stored                      | 1 TB Stored                   |
+| SaaS users                           | 10 SaaS Users                 |
+| Cloud ASM - service                  | 4 Unmanaged Assets            |
+
+## Purpose
+
+The collected data is used to estimate the capacity and licensing model required to deploy **Cortex Cloud**, making it easier to plan architecture and procurement.
+
+## Requirements
+
+- Python 3.x
+- Access to the cloud resources to be analyzed (read-only permissions are sufficient in most cases)
 
 ## Running the Script from Cloud Shell
 
@@ -23,3 +37,7 @@ This document describes how to prepare for, and how to run the Prisma Cloud Lice
 - ```python3 cc-sizing.py --azure``` for Azure.
 - ```python3 cc-sizing.py --gcp``` for GCP.
 - ```python3 cc-sizing.py --oci``` for OCI.
+
+---
+
+Let me know if you'd like to include example outputs, environment variables, or CLI options.
