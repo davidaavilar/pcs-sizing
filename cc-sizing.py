@@ -74,6 +74,7 @@ def aws(account):
         s3_all = 0
         redshift_all = 0
         efs_all = 0
+        aurora_all = 0
 
         for region in regions:
             # Get EC2 instances running.
@@ -143,11 +144,25 @@ def aws(account):
             except botocore.exceptions.ClientError as error:
                 raise error
 
-            try:
-                # Get Redshift
-                redshift = boto3.client('redshift')
-                clusters = redshift.describe_clusters()['Clusters']
-                redshift_all += len(clusters)
+            ## Omitting Redshift
+
+            # try:
+            #     # Get Redshift
+            #     redshift = boto3.client('redshift')
+            #     clusters = redshift.describe_clusters()['Clusters']
+            #     redshift_all += len(clusters)
+            # except botocore.exceptions.ClientError as error:
+            #     raise error
+            
+            # try:
+            #     # Obtener instancias RDS (including Aurora)
+            #     rds = boto3.client('rds')
+            #     instances = rds.describe_db_instances()['DBInstances']
+                
+            #     # Filtrar solo las que son de tipo Aurora
+            #     aurora_instances_list = [db for db in instances if 'aurora' in db['Engine']]
+            #     aurora_instances += len(aurora_instances_list)
+
             except botocore.exceptions.ClientError as error:
                 raise error
             
@@ -166,12 +181,11 @@ def aws(account):
             ["Fargate_Tasks", fargate_all],
             ["Lambdas", lambdas_all],
             ["S3_Buckets", s3_all],
-            ["Redshift Clusters", redshift_all],
             ["RDS Instances", rds_all],
             ["DynamoDB Tables", dynamodb_all],
             ["EFS Systems", efs_all]
             ])
-        licensing_count("AWS",ec2_all+eks_all,lambdas_all,fargate_all,s3_all,redshift_all+rds_all+dynamodb_all+efs_all)
+        licensing_count("AWS",ec2_all+eks_all,lambdas_all,fargate_all,s3_all,rds_all+dynamodb_all+efs_all)
 
     except botocore.exceptions.ClientError as error:
         raise error
