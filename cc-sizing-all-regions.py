@@ -135,10 +135,12 @@ def pcs_sizing_aws():
     org = boto3.client('organizations')
     accounts = []
 
+    aliases = iam.list_account_aliases().get('AccountAliases', [])
     account_info = {
-        "Name": iam.list_account_aliases().get('AccountAliases',[None])[0] or 'No alias',
+        "Name": aliases[0] if aliases else 'No alias',
         "Id": sts.get_caller_identity()["Account"]
     }
+
     aws(account_info)
 
     try:
