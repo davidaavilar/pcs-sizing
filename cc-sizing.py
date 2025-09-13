@@ -1,5 +1,5 @@
 import json, os, argparse, math
-import boto3,botocore
+import boto3, botocore
 from botocore.exceptions import ClientError
 
 parser = argparse.ArgumentParser()
@@ -7,12 +7,19 @@ parser.add_argument("--azure", "-az", help="Sizing for Azure", action='store_tru
 parser.add_argument("--aws", "-a", help="Sizing for AWS", action='store_true')
 parser.add_argument("--gcp", "-g", help="Sizing for GCP", action='store_true')
 parser.add_argument("--oci", "-o", help="Sizing for OCI", action='store_true')
+parser.add_argument("--region-prefix", "-rp", help="Filter AWS regions by prefix (e.g. us, eu, ap)", default=None)
 args = parser.parse_args()
-separator = "-----------------------------------------------------------------------------------------------------"
+separator = "-"*100
 
-regions_preffix = "us"
-
-cc_metering = {"serverless": 25, "vm": 1, "caas": 10, "buckets": 10, "db": 2, "saas_users": 10,"asm": 4}
+cc_metering = {
+    "serverless": 25,
+    "vm": 1,
+    "caas": 10,
+    "buckets": 10,
+    "db": 2,
+    "saas_users": 10,
+    "asm": 4
+}
 
 cc_metering_table = [
     ["VMs not running containers", "1 VM"],
@@ -27,227 +34,145 @@ cc_metering_table = [
 ]
 
 def cortex_cloud_metering():
-    print("\n{}\n{}\n{}".format(separator,"Cortex Cloud Workload Metering",separator))
-    tables(None,"",cc_metering_table)
-    
-def tables(account_info,data):
-    print ("{:<50} {:<40} {:<10}\n{}".format('Account','Service','Count',separator))
-    account = f'{account_info["Id"]} ({account_info["Name"]})'
+    print(f"\n{separator}\nCortex Cloud Workload Metering\n{separator}")
+    tables(None, cc_metering_table)
 
-    for i in data:
-        a,b = i
-        print ("{:<50} {:<40} {:<10}".format(account,a,b))
+def tables(account_info, data):
+    print(f"{'Account':<50} {'Service':<40} {'Count':<10}\n{separator}")
+    account = f'{account_info["Id"]} ({account_info["Name"]})' if account_info else ""
+    for a, b in data:
+        print(f"{account:<50} {a:<40} {b:<10}")
     print(separator)
 
-def licensing_count(cloud,vm,serverless,caas,buckets,db):
-
-    licensing_count = (
+def licensing_count(cloud, vm, serverless, caas, buckets, db):
+    total = (
         math.ceil(vm / cc_metering["vm"]) +
         math.ceil(serverless / cc_metering["serverless"]) +
         math.ceil(caas / cc_metering["caas"]) +
         math.ceil(buckets / cc_metering["buckets"]) +
         math.ceil(db / cc_metering["db"])
     )
-    print("You will need {} Cortex Cloud workloads (SKU) to cover this {} Account\n{}".format(licensing_count,cloud,separator))
+    print(f"You will need {total} Cortex Cloud workloads (SKU) to cover this {cloud} Account\n{separator}")
 
-def aws(account):
-
-    client_ec2 = boto3.client('ec2')
-    sts = boto3.client("sts")
-    org = boto3.client('organizations')
-    iam = boto3.client('iam')
+# ---------------------------- AWS ----------------------------
+def aws(account, session=None):
+    if session is None:
+        session = boto3.Session()
 
     try:
-        regions = [region['RegionName'] for region in client_ec2.describe_regions()['Regions']]
+        regions = [r['RegionName'] for r in session.client('ec2').describe_regions()['Regions']]
+        if args.region_prefix:
+            regions = [r for r in regions if r.startswith(args.region_prefix)]
     except botocore.exceptions.ClientError as error:
         raise error
-        
-    regions = [x for x in regions if x.startswith(regions_preffix)]
 
+    ec2_all = eks_all = fargate_all = lambdas_all = rds_all = dynamodb_all = efs_all = 0
+
+    # ---------------- S3 Buckets (global) ----------------
     try:
-        ec2_all = 0
-        eks_all = 0
-        fargate_all = 0
-        lambdas_all = 0
-        rds_all = 0
-        dynamodb_all = 0
+        s3 = session.client('s3')
+        s3_all = len(s3.list_buckets()['Buckets'])
+    except botocore.exceptions.ClientError as error:
         s3_all = 0
-        redshift_all = 0
-        efs_all = 0
-        aurora_all = 0
+        print(f"S3 error: {error}")
 
-        for region in regions:
-            # Get EC2 instances running.
-            try:
-                ec2 = boto3.client('ec2',region_name=region)
-                ec2_group = ec2.describe_instances(
-                    Filters=[{
-                    'Name': 'instance-state-code',
-                    'Values': ["16"] # 0 (pending), 16 (running), 32 (shutting-down), 48 (terminated), 64 (stopping), and 80 (stopped)
-                        },
-                    ]
-                    )['Reservations']
-                ec2_all += len(ec2_group)
-            except botocore.exceptions.ClientError as error:
-                raise error
-    
-            try:
-            # Get EC2 instances running on EKS.
-                client_ecs = boto3.client('ecs',region_name=region)
-                eks_list = []
-                for ec2 in ec2_group:
-                    tags = ec2['Instances'][0]['Tags']
-                    for tag in tags:
-                        if "eks:" in tag["Key"]:
-                            eks_list.append(ec2['Instances'][0])
-                            eks_all += 1
-                            break
-            except botocore.exceptions.ClientError as error:
-                raise error
-            
-            try:
-                # Get Fargate task running.
-                fargate_tasks = client_ecs.list_task_definitions()['taskDefinitionArns']
-                fargate_all += len(fargate_tasks)
-            except botocore.exceptions.ClientError as error:
-                raise error
-            
-            try:
-            # Get AWS Lambdas
-                lambda_client = boto3.client('lambda',region_name=region)
-                lambdas = lambda_client.list_functions()['Functions']
-                lambdas_all += len(lambdas)
-            except botocore.exceptions.ClientError as error:
-                raise error
-            
-            try:
-                # Get S3
-                s3 = boto3.client('s3')
-                buckets = s3.list_buckets()['Buckets']
-                s3_all += len(buckets)
-            except botocore.exceptions.ClientError as error:
-                raise error
+    # ---------------- Regional Services ----------------
+    for region in regions:
+        try:
+            ec2 = session.client('ec2', region_name=region)
+            ec2_group = ec2.describe_instances(
+                Filters=[{'Name': 'instance-state-code', 'Values': ["16"]}]
+            )['Reservations']
+            ec2_all += sum(len(r['Instances']) for r in ec2_group)
+        except botocore.exceptions.ClientError as error:
+            raise error
 
-            try:
-                # Get RDS Instances
-                rds = boto3.client('rds')
-                instances = rds.describe_db_instances()['DBInstances']
-                rds_all += len(instances)
-            except botocore.exceptions.ClientError as error:
-                raise error
-                        
-            try:
-                # Get DynamoDB
-                dynamodb = boto3.client('dynamodb')
-                dynamo_tables = dynamodb.list_tables()['TableNames']
-                dynamodb_all += len(dynamo_tables)
-            except botocore.exceptions.ClientError as error:
-                raise error
+        try:
+            ecs_client = session.client('ecs', region_name=region)
+            for ec2_item in ec2_group:
+                tags = ec2_item['Instances'][0].get('Tags', [])
+                if any("eks:" in tag["Key"] for tag in tags):
+                    eks_all += 1
+            fargate_all += len(ecs_client.list_task_definitions()['taskDefinitionArns'])
+        except botocore.exceptions.ClientError as error:
+            raise error
 
-            ## Omitting Redshift
+        try:
+            lambda_client = session.client('lambda', region_name=region)
+            lambdas_all += len(lambda_client.list_functions()['Functions'])
+        except botocore.exceptions.ClientError as error:
+            raise error
 
-            # try:
-            #     # Get Redshift
-            #     redshift = boto3.client('redshift')
-            #     clusters = redshift.describe_clusters()['Clusters']
-            #     redshift_all += len(clusters)
-            # except botocore.exceptions.ClientError as error:
-            #     raise error
-            
-            # try:
-            #     # Obtener instancias RDS (including Aurora)
-            #     rds = boto3.client('rds')
-            #     instances = rds.describe_db_instances()['DBInstances']
-                
-            #     # Filtrar solo las que son de tipo Aurora
-            #     aurora_instances_list = [db for db in instances if 'aurora' in db['Engine']]
-            #     aurora_instances += len(aurora_instances_list)
+        try:
+            rds = session.client('rds', region_name=region)
+            rds_all += len(rds.describe_db_instances()['DBInstances'])
+        except botocore.exceptions.ClientError as error:
+            raise error
 
-            except botocore.exceptions.ClientError as error:
-                raise error
-            
-            try:
-                # Get EFS
-                efs = boto3.client('efs')
-                file_systems = efs.describe_file_systems()['FileSystems']
-                efs_all = len(file_systems)
-            except botocore.exceptions.ClientError as error:
-                raise error
+        try:
+            dynamodb = session.client('dynamodb', region_name=region)
+            dynamodb_all += len(dynamodb.list_tables()['TableNames'])
+        except botocore.exceptions.ClientError as error:
+            raise error
 
-        tables(account,
-            [
-            ["EC2 Instances", ec2_all-eks_all],
-            ["EKS Nodes", eks_all],
-            ["Fargate_Tasks", fargate_all],
-            ["Lambdas", lambdas_all],
-            ["S3_Buckets", s3_all],
-            ["RDS Instances", rds_all],
-            ["DynamoDB Tables", dynamodb_all],
-            ["EFS Systems", efs_all]
-            ])
-        licensing_count("AWS",ec2_all+eks_all,lambdas_all,fargate_all,s3_all,rds_all+dynamodb_all+efs_all)
+        try:
+            efs = session.client('efs', region_name=region)
+            efs_all += len(efs.describe_file_systems()['FileSystems'])
+        except botocore.exceptions.ClientError as error:
+            raise error
 
-    except botocore.exceptions.ClientError as error:
-        raise error
+    tables(account, [
+        ["EC2 Instances", ec2_all-eks_all],
+        ["EKS Nodes", eks_all],
+        ["Fargate_Tasks", fargate_all],
+        ["Lambdas", lambdas_all],
+        ["S3_Buckets", s3_all],   
+        ["RDS Instances", rds_all],
+        ["DynamoDB Tables", dynamodb_all],
+        ["EFS Systems", efs_all]
+    ])
+    licensing_count("AWS", ec2_all+eks_all, lambdas_all, fargate_all, s3_all, rds_all+dynamodb_all+efs_all)
 
 def pcs_sizing_aws():
-
-    client_ec2 = boto3.client('ec2')
     sts = boto3.client("sts")
-    org = boto3.client('organizations')
     iam = boto3.client('iam')
+    org = boto3.client('organizations')
     accounts = []
-    print("\n{}\nGetting Resources from AWS for {} Regions\n{}".format(separator,regions_preffix.upper(), separator))
 
-    #Sizing the current (master I hope) account.
-
-    accountid = sts.get_caller_identity()["Account"]
-    aliases = iam.list_account_aliases()['AccountAliases']
-    account_name = aliases[0] if aliases else 'No alias found'
+    aliases = iam.list_account_aliases().get('AccountAliases', [])
     account_info = {
-        "Name": account_name,
-        "Id": accountid
+        "Name": aliases[0] if aliases else 'No alias',
+        "Id": sts.get_caller_identity()["Account"]
     }
-    current_account = aws(account_info)
+    aws(account_info)
 
-    print("\nTraying in other accounts\n{}".format(separator))
-    # Sizing the other member accounts
     try:
         paginator = org.get_paginator('list_accounts')
         for page in paginator.paginate():
             for acct in page['Accounts']:
-                accounts.append({'Id': acct['Id'],
-                                'Name': acct['Name'],
-                                'Status': acct['Status'],
-                                'Arn': acct['Arn']}) if acct['Status'] == "ACTIVE" else None
+                if acct['Status'] == "ACTIVE":
+                    accounts.append(acct)
     except botocore.exceptions.ClientError as error:
         print(f"{error}\n{separator}")
 
     for account in accounts:
-        arn = account['Arn'] # "arn:aws:organizations::xxxxxxxx:account/o-d0gioxy5zd/xxxxxxxxxx"
-        parts = arn.split(':')
-        org_account_id = parts[4]  # after de ::
-        target_account_id = arn.split('/')[-1]  # after latest /
-        if org_account_id != target_account_id:
-            try:
-                sts_client = boto3.client('sts')
-                role_arn = f"arn:aws:iam::{account['Id']}:role/OrganizationAccountAccessRole"
-                try:
-                    response = sts_client.assume_role(
-                        RoleArn=role_arn,
-                        RoleSessionName='CrossAccountSession'
-                    )
-                    creds = response['Credentials']
-                    aws(account)
-                    return creds
-                except botocore.exceptions.ClientError as error:
-                    print(f"Error with the account {account['Name']} - {account['Id']}: \n{error}\n{separator}")
-                    continue
-            except botocore.exceptions.ClientError as error:
-                raise error
+        role_arn = f"arn:aws:iam::{account['Id']}:role/OrganizationAccountAccessRole"
+        try:
+            creds = boto3.client('sts').assume_role(
+                RoleArn=role_arn, RoleSessionName='CrossAccountSession'
+            )['Credentials']
+            session = boto3.Session(
+                aws_access_key_id=creds['AccessKeyId'],
+                aws_secret_access_key=creds['SecretAccessKey'],
+                aws_session_token=creds['SessionToken']
+            )
+            aws({"Name": account['Name'], "Id": account['Id']}, session=session)
+        except botocore.exceptions.ClientError as error:
+            print(f"Error with {account['Name']} - {account['Id']}:\n{error}\n{separator}")
+            continue
 
+# ---------------------------- Azure ----------------------------
 def pcs_sizing_az():
-
     from azure.mgmt.compute import ComputeManagementClient
     from azure.identity import DefaultAzureCredential
     from azure.mgmt.containerservice import ContainerServiceClient
@@ -257,264 +182,137 @@ def pcs_sizing_az():
     from azure.mgmt.cosmosdb import CosmosDBManagementClient
     from azure.mgmt.storage import StorageManagementClient
 
-    sub_client = SubscriptionClient(credential=DefaultAzureCredential())
-    print("\n{}\nGetting Resources from AZURE\n{}".format(separator,separator))
+    sub_client = SubscriptionClient(DefaultAzureCredential())
+    print(f"\n{separator}\nGetting Resources from AZURE\n{separator}")
     for sub in sub_client.subscriptions.list():
-        compute_client = ComputeManagementClient(credential=DefaultAzureCredential(), subscription_id=sub.subscription_id)
-        containerservice_client = ContainerServiceClient(credential=DefaultAzureCredential(), subscription_id=sub.subscription_id)
-        app_service_client = WebSiteManagementClient(credential=DefaultAzureCredential(), subscription_id=sub.subscription_id)
-        sql_client = SqlManagementClient(credential=DefaultAzureCredential(), subscription_id=sub.subscription_id)
-        cosmos_client = CosmosDBManagementClient(credential=DefaultAzureCredential(), subscription_id=sub.subscription_id)
-        storage_client = StorageManagementClient(credential=DefaultAzureCredential(), subscription_id=sub.subscription_id)
+        compute_client = ComputeManagementClient(DefaultAzureCredential(), sub.subscription_id)
+        containerservice_client = ContainerServiceClient(DefaultAzureCredential(), sub.subscription_id)
+        app_service_client = WebSiteManagementClient(DefaultAzureCredential(), sub.subscription_id)
+        sql_client = SqlManagementClient(DefaultAzureCredential(), sub.subscription_id)
+        cosmos_client = CosmosDBManagementClient(DefaultAzureCredential(), sub.subscription_id)
+        storage_client = StorageManagementClient(DefaultAzureCredential(), sub.subscription_id)
 
-        # List VMs in subscription
-        vm_list = []
-        for vm in compute_client.virtual_machines.list_all():
-            array = vm.id.split("/")
-            resource_group = array[4]
-            vm_name = array[-1]
-            statuses = compute_client.virtual_machines.instance_view(resource_group, vm_name).statuses
-            status = len(statuses) >= 2 and statuses[1]
-            if status and status.code == 'PowerState/running':
-                vm_list.append(vm_name)
+        # VMs
+        vm_list = [vm.name for vm in compute_client.virtual_machines.list_all()
+                   if compute_client.virtual_machines.instance_view(vm.id.split('/')[4], vm.name).statuses[1].code == 'PowerState/running']
 
-        # List AKS Clusters in subscription
-        try:
-            clusters_list = []
-            node_count = 0
-            for cl in containerservice_client.managed_clusters.list():
-                clusters_list.append(cl.name)
-                agent_pool = containerservice_client.agent_pools.list(
-                    cl.id.split('/')[4].strip(),
-                    cl.name
-                )
-                for ap in agent_pool:
-                    node_count += ap.count
-        except Exception as e:
-            print("Error:", e)
-        
-        try:
-            # List Azure Functions
-            function_list = 0
-            for function in app_service_client.web_apps.list():
-                if function.kind.startswith('function'):
-                    function_list += 1
-        except Exception as e:
-            print("Error:", e)
-        
-        try:
-            # List Azure SQL
-            sql_db_count = 0
-            for server in sql_client.servers.list():
-                for db in sql_client.databases.list_by_server(server.resource_group_name, server.name):
-                    sql_db_count += 1
-        except Exception as e:
-            print("Error:", e)
+        # AKS Nodes
+        node_count = sum(ap.count for cl in containerservice_client.managed_clusters.list()
+                         for ap in containerservice_client.agent_pools.list(cl.id.split('/')[4], cl.name))
 
-        try:        
-            # List Cosmo DB
-            cosmos_count = 0
-            for account in cosmos_client.database_accounts.list():
-                cosmos_count += 1 if account.public_network_access == "Enabled" else None
-        except Exception as e:
-            print("Error:", e)
+        # Functions
+        function_list = sum(1 for f in app_service_client.web_apps.list() if f.kind.startswith('function'))
 
-        try:
-            # List Storage Accounts
-            storage_count = 0
-            for account in storage_client.storage_accounts.list():
-                storage_count += 1
-        except Exception as e:
-            print("Error:", e)
+        # SQL
+        sql_db_count = sum(len(list(sql_client.databases.list_by_server(s.resource_group_name, s.name)))
+                           for s in sql_client.servers.list())
 
-        account_info = {
-            "Name": str(sub.display_name),
-            "Id": sub.subscription_id.split('-')[4].strip()
-        }
-        tables(account_info,
-            [
+        # Cosmos DB
+        cosmos_count = sum(1 for acc in cosmos_client.database_accounts.list() if acc.public_network_access=="Enabled")
+
+        # Storage
+        storage_count = sum(1 for _ in storage_client.storage_accounts.list())
+
+        account_info = {"Name": sub.display_name, "Id": sub.subscription_id}
+        tables(account_info, [
             ["VM", len(vm_list)],
             ["AKS_NODES", node_count],
-            ["AZURE_FUNCTIONS",function_list],
+            ["AZURE_FUNCTIONS", function_list],
             ["AZURE_SQL", sql_db_count],
             ["COSMO_DB", cosmos_count],
             ["STORAGE_ACCOUNTS", storage_count]
-            ])
-        
-        #Licensing Sum
-        az_licensing_count = (
-            math.ceil(len(vm_list)+node_count / cc_metering["vm"]) +
-            math.ceil(function_list / cc_metering["serverless"]) +
-            math.ceil(storage_count / cc_metering["buckets"]) +
-            math.ceil((cosmos_count + sql_db_count) / cc_metering["db"])
-        )
-        licensing_count("Azure",len(vm_list)+node_count,function_list,0,storage_count,cosmos_count+sql_db_count)
+        ])
+        licensing_count("Azure", len(vm_list)+node_count, function_list, 0, storage_count, cosmos_count+sql_db_count)
 
+# ---------------------------- GCP ----------------------------
 def pcs_sizing_gcp():
-
     import google.auth
-    from google.cloud import compute_v1
-    from google.cloud import container_v1beta1
-    from google.cloud import functions_v1
-    from google.cloud import bigquery
-    from google.cloud import bigtable
-    from google.cloud import storage
-    from google.cloud import resourcemanager_v3
+    from google.cloud import compute_v1, container_v1beta1, functions_v1, bigquery, bigtable, storage
     from googleapiclient.discovery import build
     from collections import defaultdict
-    
-    print("\n{}\nGetting Resources from GCP\n{}".format(separator,separator))
 
+    print(f"\n{separator}\nGetting Resources from GCP\n{separator}")
     service = build('cloudresourcemanager', 'v1')
-
     request = service.projects().list()
     projects = []
 
-    while request is not None:
+    while request:
         response = request.execute()
         for project in response.get("projects", []):
-            projects.append({
-                "projectId": project["projectId"],
-                "name": project.get("name", ""),
-                "lifecycleState": project.get("lifecycleState", "")
-            })
+            projects.append({"projectId": project["projectId"], "name": project.get("name",""), "lifecycleState": project.get("lifecycleState","")})
         request = service.projects().list_next(previous_request=request, previous_response=response)
 
     for p in projects:
-        try:
-            if p['lifecycleState'] == "ACTIVE":
-                project_id = p['projectId']
-                project_name = p['name']
+        if p['lifecycleState'] != "ACTIVE":
+            continue
+        project_id = p['projectId']
+        project_name = p['name']
 
-                # Getting the Compute Instances
-                compute_client = compute_v1.InstancesClient()
-                request = compute_v1.AggregatedListInstancesRequest()
-                request.project = project_id
-                agg_list = compute_client.aggregated_list(request=request)
-                all_instances = defaultdict(list)
-                compute_list = []
-                for zone, response in agg_list:
-                    if response.instances:
-                        for instance in response.instances:
-                            if instance.status == "RUNNING":
-                                compute_list.append(instance.name)
+        # Compute Instances
+        compute_list = [i.name for zone, resp in compute_v1.InstancesClient().aggregated_list(
+            compute_v1.AggregatedListInstancesRequest(project=project_id)) if resp.instances for i in resp.instances if i.status=="RUNNING"]
 
-                # Getting the Compute Instances for GKE
-                gke_client = container_v1beta1.ClusterManagerClient()
-                gke_request = container_v1beta1.ListClustersRequest()
-                gke_request.project_id = project_id
-                gke_request.zone = "-"
-                response = gke_client.list_clusters(request=gke_request)
-                node_count = 0
-                for cluster in response.clusters:
-                    node_count += cluster.current_node_count
+        # GKE Nodes
+        gke_client = container_v1beta1.ClusterManagerClient()
+        node_count = sum(c.current_node_count for c in gke_client.list_clusters(container_v1beta1.ListClustersRequest(project_id=project_id, zone="-")).clusters)
 
-                ### Get Google Functions (Run)
-                client = functions_v1.CloudFunctionsServiceClient()
-                parent = f"projects/{project_id}/locations/-"
-                functions = client.list_functions(request={"parent": parent})
-                gcp_functions = [fn.name for fn in functions]
+        # Functions
+        gcp_functions = [fn.name for fn in functions_v1.CloudFunctionsServiceClient().list_functions(request={"parent": f"projects/{project_id}/locations/-"})]
 
-                client = build("run", "v1")
-                parent = f"projects/{project_id}/locations/-"
-                response = client.projects().locations().services().list(parent=parent).execute()
-                gcp_cloudRun = [s["metadata"]["name"] for s in response.get("items", [])]
+        # CloudRun
+        cloudrun = build("run", "v1")
+        gcp_cloudRun = [s["metadata"]["name"] for s in cloudrun.projects().locations().services().list(parent=f"projects/{project_id}/locations/-").execute().get("items", [])]
 
-                ### Get Cloud Storage buckets
-                client = storage.Client(project=project_id)
-                buckets = client.list_buckets()
-                gcp_buckets = [bucket.name for bucket in buckets]
+        # Buckets
+        gcp_buckets = [b.name for b in storage.Client(project=project_id).list_buckets()]
 
-                ## Get BigQuery datasets
-                client = bigquery.Client(project=project_id)
-                datasets = client.list_datasets()
-                gcp_bigquery_ds = [ds.dataset_id for ds in datasets]
+        # BigQuery
+        gcp_bigquery_ds = [ds.dataset_id for ds in bigquery.Client(project=project_id).list_datasets()]
 
-                ### Get Bigtable instances
+        # Bigtable
+        gcp_bigtables = [i.instance_id for i,_ in bigtable.Client(project=project_id, admin=True).list_instances()]
 
-                client = bigtable.Client(project=project_id, admin=True)
-                instances, _ = client.list_instances()
-                gcp_bigtables = [instance.instance_id for instance in instances]
+        # Cloud SQL
+        sqladmin = build("sqladmin", "v1beta4")
+        gcp_cloudsql = [i["name"] for i in sqladmin.instances().list(project=project_id).execute().get("items", []) if i["state"]=="RUNNABLE"]
 
-                ### Get Cloud SQL instances
-                sqladmin = build("sqladmin", "v1beta4")
-                response = sqladmin.instances().list(project=project_id).execute()
-                if "items" in response:
-                    gcp_cloudql = [instance["name"] for instance in response["items"] if instance["state"] == "RUNNABLE"]
-                else:
-                    gcp_cloudql = []
-                
-                account_info = {
-                    "Name": project_name,
-                    "Id": project_id
-                }
+        account_info = {"Name": project_name, "Id": project_id}
+        tables(account_info, [
+            ["Compute Instances", len(compute_list)],
+            ["GKE Nodes", node_count],
+            ["Google Functions", len(gcp_functions)],
+            ["Google CloudRun", len(gcp_cloudRun)],
+            ["Cloud Storages", len(gcp_buckets)],
+            ["BigQuery Datasets", len(gcp_bigquery_ds)],
+            ["BigTable instances", len(gcp_bigtables)],
+            ["CloudSQL instances", len(gcp_cloudsql)]
+        ])
+        licensing_count("GCP", len(compute_list)+node_count, len(gcp_functions)+len(gcp_cloudRun), 0, len(gcp_buckets), len(gcp_bigquery_ds)+len(gcp_bigtables)+len(gcp_cloudsql))
 
-                tables(account_info,
-                    [
-                    ["Compute Instances", len(compute_list)],
-                    ["GKE Nodes", node_count],
-                    ["Google Functions", len(gcp_functions)],
-                    ["Google CloudRun", len(gcp_cloudRun)],
-                    ["Cloud Storages", len(gcp_buckets)],
-                    ["BigQuery Datasets", len(gcp_bigquery_ds)],
-                    ["BigTable instances", len(gcp_bigtables)],
-                    ["CloudSQL instances", len(gcp_cloudql)],
-                ])
-                licensing_count("GCP",len(compute_list)+node_count,len(gcp_cloudRun)+len(gcp_functions),0,len(gcp_buckets),len(gcp_bigquery_ds)+len(gcp_bigtables)+len(gcp_cloudql))
-        
-        except Exception as e:
-            print("Error:", e)
-
+# ---------------------------- OCI ----------------------------
 def pcs_sizing_oci():
-
     import oci
-    
-    print("\n{}\nGetting Resources from OCI\n{}".format(separator,separator))
+    print(f"\n{separator}\nGetting Resources from OCI\n{separator}")
     config = oci.config.from_file()
-    IdentityClient = oci.identity.IdentityClient(config)
-    ComputeClient = oci.core.ComputeClient(config)
-    ContainerClient = oci.container_engine.ContainerEngineClient(config)
+    identity = oci.identity.IdentityClient(config)
+    compute = oci.core.ComputeClient(config)
 
-    # List all Compartments
+    compartments = identity.list_compartments(compartment_id=config['tenancy']).data
+    compartments_list = [{"Name":"root","Id":config['tenancy']}] + [{"Name":c.name,"Id":c.id} for c in compartments]
 
-    compartments = IdentityClient.list_compartments(
-        compartment_id=config['tenancy']
-    )
-    
-    # Adding the compartment root to the list
-    compartments_list = []
-    compartments_list.append({'Name':"root","Id":config['tenancy']})
+    for comp in compartments_list:
+        compute_count = sum(1 for i in compute.list_instances(compartment_id=comp['Id']).data if i.lifecycle_state=="RUNNING")
+        tables({"Name": comp['Name'], "Id": comp['Id']}, [["Compute_Instances", compute_count]])
 
-    for compartment in compartments.data:
-        data = {'Name':compartment.name,"Id":compartment.id}
-        compartments_list.append(data)
-
-    # For every compartment, list all the VMs and OKE nodes (TODO)
-    
-    for compartment in compartments_list:
-        response = ComputeClient.list_instances(compartment_id=compartment['Id'])
-        compute_oci = 0
-        for instance in response.data:
-            if instance.lifecycle_state == "RUNNING":
-                compute_oci += 1
-
-        # node_pool = ContainerClient.list_node_pools(compartment_id=compartment['Id'])
-        # print(node_pool.data)
-    
-        tables("Compartment",compartment['Name'],
-            [
-            ["Compute_Instances", compute_oci]
-            ])
-        
+# ---------------------------- MAIN ----------------------------
 if __name__ == '__main__':
-    # cortex_cloud_metering()
-    if args.aws == True:
+    if args.aws:
         pcs_sizing_aws()
-    elif args.azure == True:
-        pcs_sizing_az()  
-    elif args.oci == True:
-        pcs_sizing_oci()  
-    elif args.gcp == True:
+    elif args.azure:
+        pcs_sizing_az()
+    elif args.oci:
+        pcs_sizing_oci()
+    elif args.gcp:
         pcs_sizing_gcp()
     else:
-        print("You must specify an argument.\n\x1B[3m'--aws'\x1B[0m for AWS\n\x1B[3m'--azure'\x1B[0m for Azure\n\x1B[3m'--gcp --project <project-name>'\x1B[0m for GCP\n\x1B[3m'--oci'\x1B[0m for OCI")
+        print("You must specify an argument:\n--aws | --azure | --gcp | --oci")

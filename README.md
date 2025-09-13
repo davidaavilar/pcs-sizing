@@ -33,10 +33,10 @@ The collected data is used to estimate the capacity and licensing model required
 2. Clone this repository, e.g. ```git clone https://github.com/davidaavilar/pcs-sizing.git```
 3. ```cd pcs-sizing```
 4. ```pip install -r requeriments.txt```
-- ```python3 cc-sizing.py --aws``` for AWS.
-- ```python3 cc-sizing.py --azure``` for Azure.
-- ```python3 cc-sizing.py --gcp``` for GCP.
-- ```python3 cc-sizing.py --oci``` for OCI.
+- ```python3 cc-sizing.py --aws --region us``` eg. region prefix us, eu, ap
+- ```python3 cc-sizing.py --azure```
+- ```python3 cc-sizing.py --gcp```
+- ```python3 cc-sizing.py --oci```
 
 ## TODO
 
