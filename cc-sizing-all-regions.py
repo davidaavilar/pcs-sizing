@@ -35,7 +35,7 @@ cc_metering_table = [
 
 def cortex_cloud_metering():
     print(f"\n{separator}\nCortex Cloud Workload Metering\n{separator}")
-    tables(None, "", cc_metering_table)
+    tables(None, cc_metering_table)
 
 def tables(account_info, data):
     print(f"{'Account':<50} {'Service':<40} {'Count':<10}\n{separator}")
@@ -55,64 +55,68 @@ def licensing_count(cloud, vm, serverless, caas, buckets, db):
     print(f"You will need {total} Cortex Cloud workloads (SKU) to cover this {cloud} Account\n{separator}")
 
 # ---------------------------- AWS ----------------------------
-def aws(account):
+def aws(account, session=None):
+    if session is None:
+        session = boto3.Session()
+
     try:
-        regions = [r['RegionName'] for r in boto3.client('ec2').describe_regions()['Regions']]
+        regions = [r['RegionName'] for r in session.client('ec2').describe_regions()['Regions']]
         if args.region_prefix:
             regions = [r for r in regions if r.startswith(args.region_prefix)]
     except botocore.exceptions.ClientError as error:
         raise error
 
-    ec2_all = eks_all = fargate_all = lambdas_all = rds_all = dynamodb_all = s3_all = efs_all = 0
+    ec2_all = eks_all = fargate_all = lambdas_all = rds_all = dynamodb_all = efs_all = 0
 
+    # ---------------- S3 Buckets (global) ----------------
+    try:
+        s3 = session.client('s3')
+        s3_all = len(s3.list_buckets()['Buckets'])
+    except botocore.exceptions.ClientError as error:
+        s3_all = 0
+        print(f"S3 error: {error}")
+
+    # ---------------- Regional Services ----------------
     for region in regions:
         try:
-            ec2 = boto3.client('ec2', region_name=region)
-            ec2_group = ec2.describe_instances(Filters=[{'Name':'instance-state-code','Values':["16"]}])['Reservations']
-            ec2_all += len(ec2_group)
+            ec2 = session.client('ec2', region_name=region)
+            ec2_group = ec2.describe_instances(
+                Filters=[{'Name': 'instance-state-code', 'Values': ["16"]}]
+            )['Reservations']
+            ec2_all += sum(len(r['Instances']) for r in ec2_group)
         except botocore.exceptions.ClientError as error:
             raise error
 
         try:
-            ecs_client = boto3.client('ecs', region_name=region)
+            ecs_client = session.client('ecs', region_name=region)
             for ec2_item in ec2_group:
                 tags = ec2_item['Instances'][0].get('Tags', [])
                 if any("eks:" in tag["Key"] for tag in tags):
                     eks_all += 1
-        except botocore.exceptions.ClientError as error:
-            raise error
-
-        try:
             fargate_all += len(ecs_client.list_task_definitions()['taskDefinitionArns'])
         except botocore.exceptions.ClientError as error:
             raise error
 
         try:
-            lambda_client = boto3.client('lambda', region_name=region)
+            lambda_client = session.client('lambda', region_name=region)
             lambdas_all += len(lambda_client.list_functions()['Functions'])
         except botocore.exceptions.ClientError as error:
             raise error
 
         try:
-            s3 = boto3.client('s3')
-            s3_all += len(s3.list_buckets()['Buckets'])
-        except botocore.exceptions.ClientError as error:
-            raise error
-
-        try:
-            rds = boto3.client('rds', region_name=region)
+            rds = session.client('rds', region_name=region)
             rds_all += len(rds.describe_db_instances()['DBInstances'])
         except botocore.exceptions.ClientError as error:
             raise error
 
         try:
-            dynamodb = boto3.client('dynamodb', region_name=region)
+            dynamodb = session.client('dynamodb', region_name=region)
             dynamodb_all += len(dynamodb.list_tables()['TableNames'])
         except botocore.exceptions.ClientError as error:
             raise error
 
         try:
-            efs = boto3.client('efs', region_name=region)
+            efs = session.client('efs', region_name=region)
             efs_all += len(efs.describe_file_systems()['FileSystems'])
         except botocore.exceptions.ClientError as error:
             raise error
@@ -122,7 +126,7 @@ def aws(account):
         ["EKS Nodes", eks_all],
         ["Fargate_Tasks", fargate_all],
         ["Lambdas", lambdas_all],
-        ["S3_Buckets", s3_all],
+        ["S3_Buckets", s3_all],   
         ["RDS Instances", rds_all],
         ["DynamoDB Tables", dynamodb_all],
         ["EFS Systems", efs_all]
@@ -140,7 +144,6 @@ def pcs_sizing_aws():
         "Name": aliases[0] if aliases else 'No alias',
         "Id": sts.get_caller_identity()["Account"]
     }
-
     aws(account_info)
 
     try:
@@ -155,8 +158,15 @@ def pcs_sizing_aws():
     for account in accounts:
         role_arn = f"arn:aws:iam::{account['Id']}:role/OrganizationAccountAccessRole"
         try:
-            creds = boto3.client('sts').assume_role(RoleArn=role_arn, RoleSessionName='CrossAccountSession')['Credentials']
-            aws({"Name": account['Name'], "Id": account['Id']})
+            creds = boto3.client('sts').assume_role(
+                RoleArn=role_arn, RoleSessionName='CrossAccountSession'
+            )['Credentials']
+            session = boto3.Session(
+                aws_access_key_id=creds['AccessKeyId'],
+                aws_secret_access_key=creds['SecretAccessKey'],
+                aws_session_token=creds['SessionToken']
+            )
+            aws({"Name": account['Name'], "Id": account['Id']}, session=session)
         except botocore.exceptions.ClientError as error:
             print(f"Error with {account['Name']} - {account['Id']}:\n{error}\n{separator}")
             continue
@@ -203,7 +213,7 @@ def pcs_sizing_az():
         # Storage
         storage_count = sum(1 for _ in storage_client.storage_accounts.list())
 
-        account_info = {"Name": sub.display_name, "Id": sub.subscription_id.split('-')[4]}
+        account_info = {"Name": sub.display_name, "Id": sub.subscription_id}
         tables(account_info, [
             ["VM", len(vm_list)],
             ["AKS_NODES", node_count],
@@ -292,7 +302,7 @@ def pcs_sizing_oci():
 
     for comp in compartments_list:
         compute_count = sum(1 for i in compute.list_instances(compartment_id=comp['Id']).data if i.lifecycle_state=="RUNNING")
-        tables("Compartment", comp['Name'], [["Compute_Instances", compute_count]])
+        tables({"Name": comp['Name'], "Id": comp['Id']}, [["Compute_Instances", compute_count]])
 
 # ---------------------------- MAIN ----------------------------
 if __name__ == '__main__':
