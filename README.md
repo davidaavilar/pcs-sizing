@@ -32,7 +32,7 @@ The collected data is used to estimate the capacity and licensing model required
 1. Start a Cloud Shell session from the CSP UI, which should have the CLI tool, your credentials, ```git``` and ``jq`` already prepared
 2. Clone this repository, e.g. ```git clone https://github.com/davidaavilar/pcs-sizing.git```
 3. ```cd pcs-sizing```
-4. ```pip install -r requeriments.txt```
+4. ```pip install -r requirements.txt```
 - ```python3 cc-sizing.py --aws --region us``` eg. region prefix us, eu, ap
 - ```python3 cc-sizing.py --azure```
 - ```python3 cc-sizing.py --gcp```
