@@ -78,6 +78,9 @@ def aws(account, session=None):
 
     # ---------------- Regional Services ----------------
     for region in regions:
+
+        # EC2 Running 
+
         try:
             ec2 = session.client('ec2', region_name=region)
             ec2_group = ec2.describe_instances(
@@ -87,34 +90,44 @@ def aws(account, session=None):
         except botocore.exceptions.ClientError as error:
             raise error
 
+        # EC2 Running but are EKS nodes
         try:
-            ecs_client = session.client('ecs', region_name=region)
             for ec2_item in ec2_group:
                 tags = ec2_item['Instances'][0].get('Tags', [])
                 if any("eks:" in tag["Key"] for tag in tags):
                     eks_all += 1
+        except botocore.exceptions.ClientError as error:
+            raise error
+
+        # Fargate Task Definitions
+        try:
+            ecs_client = session.client('ecs', region_name=region)
             fargate_all += len(ecs_client.list_task_definitions()['taskDefinitionArns'])
         except botocore.exceptions.ClientError as error:
             raise error
 
+        # Fargate Task Definitions
         try:
             lambda_client = session.client('lambda', region_name=region)
             lambdas_all += len(lambda_client.list_functions()['Functions'])
         except botocore.exceptions.ClientError as error:
             raise error
-
+        
+        # RDS instances
         try:
             rds = session.client('rds', region_name=region)
             rds_all += len(rds.describe_db_instances()['DBInstances'])
         except botocore.exceptions.ClientError as error:
             raise error
 
+        # DynamoDB
         try:
             dynamodb = session.client('dynamodb', region_name=region)
             dynamodb_all += len(dynamodb.list_tables()['TableNames'])
         except botocore.exceptions.ClientError as error:
             raise error
 
+        # EFS
         try:
             efs = session.client('efs', region_name=region)
             efs_all += len(efs.describe_file_systems()['FileSystems'])
