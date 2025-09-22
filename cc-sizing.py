@@ -9,7 +9,7 @@ parser.add_argument("--gcp", "-g", help="Sizing for GCP", action='store_true')
 parser.add_argument("--oci", "-o", help="Sizing for OCI", action='store_true')
 parser.add_argument("--region-prefix", "-rp", help="Filter AWS regions by prefix (e.g. us, eu, ap)", default=None)
 args = parser.parse_args()
-separator = "-"*100
+separator = "-"*140
 
 cc_metering = {
     "serverless": 25,
@@ -52,7 +52,22 @@ def licensing_count(cloud, vm, serverless, caas, buckets, db):
         math.ceil(buckets / cc_metering["buckets"]) +
         math.ceil(db / cc_metering["db"])
     )
-    print(f"You will need {total} Cortex Cloud workloads (SKU) to cover this {cloud} Account\n{separator}")
+
+    c1 = (
+        math.ceil(buckets / cc_metering["buckets"]) +
+        math.ceil(db / cc_metering["db"])
+    )
+
+    c3 = (
+        math.ceil(vm / cc_metering["vm"]) +
+        math.ceil(serverless / cc_metering["serverless"]) +
+        math.ceil(caas / cc_metering["caas"])
+    )
+
+    print(f"Total C1 (Buckets,DBS) Cortex Cloud workloads (SKU) to cover this {cloud} Account: **({c1})**\n")
+    print(f"Total C3 (Compute Workloaks) Cortex Cloud workloads (SKU) to cover this {cloud} Account (if needed): **({c3})**\n")
+    print(f"Total Cortex Cloud workloads (SKU) to cover this {cloud} Account: **({total})** \n{separator}")
+
 
 # ---------------------------- AWS ----------------------------
 def aws(account, session=None):
