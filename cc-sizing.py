@@ -209,6 +209,7 @@ def pcs_sizing_az():
     from azure.mgmt.sql import SqlManagementClient
     from azure.mgmt.cosmosdb import CosmosDBManagementClient
     from azure.mgmt.storage import StorageManagementClient
+    from azure.mgmt.core.tools import parse_resource_id
 
     sub_client = SubscriptionClient(DefaultAzureCredential())
     print(f"\n{separator}\nGetting Resources from AZURE\n{separator}")
@@ -232,8 +233,11 @@ def pcs_sizing_az():
         function_list = sum(1 for f in app_service_client.web_apps.list() if f.kind.startswith('function'))
 
         # SQL
-        sql_db_count = sum(len(list(sql_client.databases.list_by_server(s.resource_group_name, s.name)))
-                           for s in sql_client.servers.list())
+        sql_db_count = sum(
+            sum(1 for db in sql_client.databases.list_by_server(parse_resource_id(s.id)['resource_group'], s.name)
+        if db.name.lower() != 'master')
+        for s in sql_client.servers.list()
+        )
 
         # Cosmos DB
         cosmos_count = sum(1 for acc in cosmos_client.database_accounts.list() if acc.public_network_access=="Enabled")

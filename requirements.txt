@@ -6,6 +6,7 @@ azure.mgmt.web
 azure.mgmt.sql
 azure.mgmt.cosmosdb
 azure.mgmt.storage
+azure.mgmt.core.tools
 google-cloud-compute
 google-cloud-container
 google-cloud-resource-manager
