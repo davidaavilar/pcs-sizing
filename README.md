@@ -27,6 +27,18 @@ The collected data is used to estimate the capacity and licensing model required
 - Python 3.x
 - Access to the cloud resources to be analyzed (read-only permissions are sufficient in most cases)
 
+## GCP APIs Requirements
+
+- Cloud Functions API
+- Compute Engine API
+- Kubernetes Engine API
+- Cloud Run Admin API
+- Cloud Bigtable Admin API
+- Cloud Bigtable API
+- Cloud Resource Manager API
+- Cloud Storage API
+- BigQuery API
+
 ## Running the Script from Cloud Shell
 
 1. Start a Cloud Shell session from the CSP UI, which should have the CLI tool, your credentials, ```git``` and ``jq`` already prepared

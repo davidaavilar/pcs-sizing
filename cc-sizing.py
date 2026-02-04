@@ -302,7 +302,13 @@ def pcs_sizing_gcp():
         gcp_bigquery_ds = [ds.dataset_id for ds in bigquery.Client(project=project_id).list_datasets()]
 
         # Bigtable
-        gcp_bigtables = [i.instance_id for i,_ in bigtable.Client(project=project_id, admin=True).list_instances()]
+        try:
+            bt_client = bigtable.Client(project=project_id, admin=True)
+            instances, failed_locations = bt_client.list_instances()
+            gcp_bigtables = [inst.instance_id for inst in instances]
+        except Exception as e:
+            print(f"[SKIP] Bigtable {project_id}: {e}")
+            gcp_bigtables = []
 
         # Cloud SQL
         sqladmin = build("sqladmin", "v1beta4")
