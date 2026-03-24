@@ -2,6 +2,8 @@ import json, os, argparse, math
 import boto3, botocore
 from botocore.exceptions import ClientError
 
+prefix_project = ""
+
 parser = argparse.ArgumentParser()
 parser.add_argument("--azure", "-az", help="Sizing for Azure", action='store_true')
 parser.add_argument("--aws", "-a", help="Sizing for AWS", action='store_true')
@@ -64,9 +66,8 @@ def licensing_count(cloud, vm, serverless, caas, buckets, db):
         math.ceil(caas / cc_metering["caas"])
     )
 
-    print(f"Total C1 (Buckets,DBS) Cortex Cloud workloads (SKU) to cover this {cloud} Account: **({c1})**\n")
-    print(f"Total C3 (Compute Workloaks) Cortex Cloud workloads (SKU) to cover this {cloud} Account (if needed): **({c3})**\n")
-    print(f"Total Cortex Cloud workloads (SKU) to cover this {cloud} Account: **({total})** \n{separator}")
+    print(f"If want ONLY POSTURE you'll need {total} C1 SKU to cover this {cloud}\n")
+    print(f"If want ONLY RUNTIME you'll need {c1} C1 SKU and {c3} C3 SKU to cover this {cloud}\n")
 
 
 # ---------------------------- AWS ----------------------------
@@ -275,7 +276,7 @@ def pcs_sizing_gcp():
         request = service.projects().list_next(previous_request=request, previous_response=response)
 
     for p in projects:
-        if p['lifecycleState'] != "ACTIVE":
+        if p['lifecycleState'] != "ACTIVE" and prefix_project in p['name']:
             continue
         project_id = p['projectId']
         project_name = p['name']
