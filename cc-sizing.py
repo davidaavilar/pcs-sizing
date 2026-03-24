@@ -276,10 +276,10 @@ def pcs_sizing_gcp():
         request = service.projects().list_next(previous_request=request, previous_response=response)
 
     for p in projects:
-        if p['lifecycleState'] != "ACTIVE" and prefix_project in p['name']:
-            continue
-        project_id = p['projectId']
-        project_name = p['name']
+        for p in projects:
+            if p['lifecycleState'] == "ACTIVE" and prefix_project in p['name']:
+                project_id = p['projectId']
+                project_name = p['name']
 
         # Compute Instances
         compute_list = [i.name for zone, resp in compute_v1.InstancesClient().aggregated_list(
