@@ -2,6 +2,8 @@ import json, os, argparse, math
 import boto3, botocore
 from botocore.exceptions import ClientError
 
+prefix_project = ""
+
 parser = argparse.ArgumentParser()
 parser.add_argument("--azure", "-az", help="Sizing for Azure", action='store_true')
 parser.add_argument("--aws", "-a", help="Sizing for AWS", action='store_true')
@@ -261,8 +263,6 @@ def pcs_sizing_gcp():
     from google.cloud import compute_v1, container_v1beta1, functions_v1, bigquery, bigtable, storage
     from googleapiclient.discovery import build
     from collections import defaultdict
-
-    prefix_project = ""
 
     print(f"\n{separator}\nGetting Resources from GCP\n{separator}")
     service = build('cloudresourcemanager', 'v1')
