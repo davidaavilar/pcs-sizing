@@ -1,8 +1,6 @@
-import json, os, argparse, math
+import json, os, argparse, math, time
 import boto3, botocore
 from botocore.exceptions import ClientError
-
-prefix_project = ""
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--azure", "-az", help="Sizing for Azure", action='store_true')
@@ -66,9 +64,9 @@ def licensing_count(cloud, vm, serverless, caas, buckets, db):
         math.ceil(caas / cc_metering["caas"])
     )
 
-    print(f"If want ONLY POSTURE you'll need {total} C1 SKU to cover this {cloud}\n")
-    print(f"If want ONLY RUNTIME you'll need {c1} C1 SKU and {c3} C3 SKU to cover this {cloud}\n")
-
+    print(f"Posture Workloads (C1) = {c1}")
+    print(f"Runtime Workloads (C3) = {c3}\n{separator}\n")
+    return c1,c3
 
 # ---------------------------- AWS ----------------------------
 def aws(account, session=None):
@@ -258,6 +256,21 @@ def pcs_sizing_az():
         licensing_count("Azure", len(vm_list)+node_count, function_list, 0, storage_count, cosmos_count+sql_db_count)
 
 # ---------------------------- GCP ----------------------------
+from googleapiclient.discovery import build
+from googleapiclient.errors import HttpError
+
+def is_api_enabled(project_id: str, service_name: str) -> bool:
+    serviceusage = build("serviceusage", "v1")
+    name = f"projects/{project_id}/services/{service_name}"
+    resp = serviceusage.services().get(name=name).execute()
+    return resp.get("state") == "ENABLED"
+
+def enable_api(project_id: str, service_name: str) -> None:
+    serviceusage = build("serviceusage", "v1")
+    name = f"projects/{project_id}/services/{service_name}"
+    serviceusage.services().enable(name=name).execute()
+    time.sleep(10)
+
 def pcs_sizing_gcp():
     import google.auth
     from google.cloud import compute_v1, container_v1beta1, functions_v1, bigquery, bigtable, storage
@@ -269,47 +282,93 @@ def pcs_sizing_gcp():
     request = service.projects().list()
     projects = []
 
+    apis = apis = [
+        "compute.googleapis.com",
+        "container.googleapis.com",
+        "cloudfunctions.googleapis.com",
+        "run.googleapis.com",
+        "storage.googleapis.com",
+        "bigquery.googleapis.com",
+        "bigtableadmin.googleapis.com",
+        "sqladmin.googleapis.com",
+    ]
+
     while request:
         response = request.execute()
         for project in response.get("projects", []):
             projects.append({"projectId": project["projectId"], "name": project.get("name",""), "lifecycleState": project.get("lifecycleState","")})
         request = service.projects().list_next(previous_request=request, previous_response=response)
 
+    count_per_project = []
+
     for p in projects:
-        for p in projects:
-            if p['lifecycleState'] == "ACTIVE" and prefix_project in p['name']:
-                project_id = p['projectId']
-                project_name = p['name']
+        if p['lifecycleState'] == "ACTIVE":
+            project_id = p['projectId']
+            project_name = p['name']
+            print(f"Getting Resources for {project_name}\n{separator}")
+            for api in apis:
+                try:
+                    if not is_api_enabled(project_id, api):
+                        print(f"{api} API Not enabled. Enabling...")
+                        enable_api(project_id, api)
+                    # else:
+                    #     print(f"{api} enabled.")
+                except HttpError as e:
+                    print(f"Error en {project_id}: {e}")
 
         # Compute Instances
-        compute_list = [i.name for zone, resp in compute_v1.InstancesClient().aggregated_list(
-            compute_v1.AggregatedListInstancesRequest(project=project_id)) if resp.instances for i in resp.instances if i.status=="RUNNING"]
-
+        try:
+            compute_list = [i.name for zone, resp in compute_v1.InstancesClient().aggregated_list(
+                compute_v1.AggregatedListInstancesRequest(project=project_id)) if resp.instances for i in resp.instances if i.status=="RUNNING"]
+        except Exception as e:
+            compute_list = []
+    
         # GKE Nodes
-        gke_client = container_v1beta1.ClusterManagerClient()
-        node_count = sum(c.current_node_count for c in gke_client.list_clusters(container_v1beta1.ListClustersRequest(project_id=project_id, zone="-")).clusters)
+        try:
+            gke_client = container_v1beta1.ClusterManagerClient()
+            node_count = sum(c.current_node_count for c in gke_client.list_clusters(container_v1beta1.ListClustersRequest(project_id=project_id, zone="-")).clusters)
+        except Exception as e:
+            node_count = []
 
         # Functions
-        gcp_functions = [fn.name for fn in functions_v1.CloudFunctionsServiceClient().list_functions(request={"parent": f"projects/{project_id}/locations/-"})]
+        try:
+            gcp_functions = [fn.name for fn in functions_v1.CloudFunctionsServiceClient().list_functions(request={"parent": f"projects/{project_id}/locations/-"})]
+        except Exception as e:
+            gcp_functions = []
 
         # CloudRun
-        cloudrun = build("run", "v1")
-        gcp_cloudRun = [s["metadata"]["name"] for s in cloudrun.projects().locations().services().list(parent=f"projects/{project_id}/locations/-").execute().get("items", [])]
+        try:
+            cloudrun = build("run", "v1")
+            gcp_cloudRun = [s["metadata"]["name"] for s in cloudrun.projects().locations().services().list(parent=f"projects/{project_id}/locations/-").execute().get("items", [])]
+        except Exception as e:
+            gcp_cloudRun = []
 
         # Buckets
-        gcp_buckets = [b.name for b in storage.Client(project=project_id).list_buckets()]
+        try:
+            gcp_buckets = [b.name for b in storage.Client(project=project_id).list_buckets()]
+        except Exception as e:
+            gcp_buckets = []
 
         # BigQuery
-        gcp_bigquery_ds = [ds.dataset_id for ds in bigquery.Client(project=project_id).list_datasets()]
+        try:
+            gcp_bigquery_ds = [ds.dataset_id for ds in bigquery.Client(project=project_id).list_datasets()]
+        except Exception as e:
+            gcp_bigquery_ds = []
 
         # Bigtable
-        client = bigtable.Client(project=project_id, admin=True)
-        instances, _ = client.list_instances()
-        gcp_bigtables = [instance.instance_id for instance in instances]
+        try:
+            client = bigtable.Client(project=project_id, admin=True)
+            instances, _ = client.list_instances()
+            gcp_bigtables = [instance.instance_id for instance in instances]
+        except Exception as e:
+            gcp_bigtables = []
 
         # Cloud SQL
-        sqladmin = build("sqladmin", "v1beta4")
-        gcp_cloudsql = [i["name"] for i in sqladmin.instances().list(project=project_id).execute().get("items", []) if i["state"]=="RUNNABLE"]
+        try:
+            sqladmin = build("sqladmin", "v1beta4")
+            gcp_cloudsql = [i["name"] for i in sqladmin.instances().list(project=project_id).execute().get("items", []) if i["state"]=="RUNNABLE"]
+        except Exception as e:
+            gcp_cloudsql = []
 
         account_info = {"Name": project_name, "Id": project_id}
         tables(account_info, [
@@ -322,7 +381,11 @@ def pcs_sizing_gcp():
             ["BigTable instances", len(gcp_bigtables)],
             ["CloudSQL instances", len(gcp_cloudsql)]
         ])
-        licensing_count("GCP", len(compute_list)+node_count, len(gcp_functions)+len(gcp_cloudRun), 0, len(gcp_buckets), len(gcp_bigquery_ds)+len(gcp_bigtables)+len(gcp_cloudsql))
+        count_per_project.append(licensing_count("GCP", len(compute_list)+node_count, len(gcp_functions)+len(gcp_cloudRun), 0, len(gcp_buckets), len(gcp_bigquery_ds)+len(gcp_bigtables)+len(gcp_cloudsql)))
+    
+    result = [sum(x) for x in zip(*count_per_project)]
+    print(f"TOTAL Posture Workloads (C1) = {result[0]}")
+    print(f"TOTAL Runtime Workloads (C3) = {result[1]}\n{separator}")
 
 # ---------------------------- OCI ----------------------------
 def pcs_sizing_oci():
